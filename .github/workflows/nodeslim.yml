@@ -1,0 +1,105 @@
+name: NodeSlim — Node Modules Optimization Check
+
+on:
+  push:
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+      - 'pnpm-lock.yaml'
+      - 'yarn.lock'
+      - 'bun.lockb'
+  pull_request:
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+      - 'pnpm-lock.yaml'
+      - 'yarn.lock'
+      - 'bun.lockb'
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Install NodeSlim (local)
+        run: npm link
+
+      - name: Run NodeSlim Scan
+        id: scan
+        run: |
+          nodeslim scan --output json --save-report || true
+          cat .nodeslim/reports/latest.json | head -c 2000
+
+      - name: Check size threshold
+        run: |
+          MAX_SIZE=104857600  # 100MB, override via .nodeslimrc.json
+          if [ -f .nodeslim/reports/latest.json ]; then
+            ACTUAL_SIZE=$(node -e "console.log(JSON.parse(require('fs').readFileSync('.nodeslim/reports/latest.json','utf8')).summary?.totalSize || JSON.parse(require('fs').readFileSync('.nodeslim/reports/latest.json','utf8')).totalSize || 0)")
+            echo "Actual size: $ACTUAL_SIZE bytes"
+            if [ "$ACTUAL_SIZE" -gt "$MAX_SIZE" ]; then
+              echo "❌ node_modules ($ACTUAL_SIZE bytes) exceeds threshold ($MAX_SIZE bytes)"
+              # Do not fail hard by default — change to exit 1 if you want to block PRs
+              # exit 1
+            fi
+          fi
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: nodeslim-report
+          path: .nodeslim/reports/
+          if-no-files-found: warn
+
+      - name: Comment PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = '.nodeslim/reports/latest.json';
+            if (!fs.existsSync(path)) return;
+            const report = JSON.parse(fs.readFileSync(path,'utf8'));
+            const s = report.summary || report;
+            const totalMB = ( (s.totalSize||0) / 1024/1024).toFixed(2);
+            const optMB = ( (s.optimizableSize||0) / 1024/1024).toFixed(2);
+            const body = `## 📦 NodeSlim 分析报告
+
+            | 指标 | 数值 |
+            |------|------|
+            | 总包数 | ${s.totalPackages ?? report.packages?.length ?? '-'} |
+            | 总体积 | ${totalMB} MB |
+            | 重复包 | ${s.duplicateCount ?? report.duplicates?.length ?? 0} 个 |
+            | 可优化 | ${optMB} MB |
+
+            ${(s.duplicateCount||0) > 0 ? '⚠️ 发现重复依赖，建议优化！' : '✅ 无重复依赖'}
+            ${(s.bloatCount||0) > 0 ? `🐘 发现 ${s.bloatCount} 个膨胀包` : '✅ 无膨胀包'}
+
+            <details><summary>优化建议</summary>
+
+            ${(report.suggestions||[]).slice(0,5).map(x=>`- [${x.type}] ${x.message}`).join('\n') || '暂无'}
+            </details>
+
+            > 报告产物已上传至 Artifacts，可下载查看完整 HTML 报告。
+            `;
+            try{
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body
+              });
+            }catch(e){ console.log('comment failed', e.message); }

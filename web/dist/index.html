@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>NodeSlim — 智能优化面板</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📦</text></svg>">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+  *{font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif}
+  .bar-gradient{background:linear-gradient(90deg,#667eea,#764ba2)}
+  .glass{background:rgba(255,255,255,.15);backdrop-filter:blur(8px)}
+</style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+<header class="bg-gradient-to-br from-[#667eea] to-[#764ba2] text-white">
+  <div class="max-w-7xl mx-auto px-6 py-8">
+    <div class="flex flex-wrap items-start justify-between gap-4">
+      <div>
+        <h1 class="text-3xl font-bold">📦 NodeSlim <span class="font-normal text-white/80 text-lg">智能优化面板</span></h1>
+        <p id="meta" class="mt-2 text-white/90 text-sm">—</p>
+        <p class="mt-3"><span class="glass px-3 py-1 rounded-full text-xs">NodeSlim v1.2.0 — 从 850MB 到 50MB，一键诊断</span></p>
+      </div>
+      <div class="flex gap-3">
+        <button id="btnRefresh" class="bg-white/20 hover:bg-white/30 px-4 py-2 rounded-lg text-sm font-medium transition">🔄 刷新</button>
+        <button id="btnScan" class="bg-white text-[#667eea] hover:bg-white/90 px-5 py-2 rounded-lg text-sm font-bold shadow transition">⚡ 一键扫描</button>
+      </div>
+    </div>
+  </div>
+</header>
+
+<div class="max-w-7xl mx-auto px-6 py-6">
+  <!-- Tabs -->
+  <div class="flex gap-2 mb-6 flex-wrap">
+    <button data-tab="overview" class="tab active px-4 py-2 rounded-full text-sm font-medium bg-[#667eea] text-white shadow">概览</button>
+    <button data-tab="packages" class="tab px-4 py-2 rounded-full text-sm font-medium bg-white text-slate-600 hover:bg-slate-100 border">包列表</button>
+    <button data-tab="duplicates" class="tab px-4 py-2 rounded-full text-sm font-medium bg-white text-slate-600 hover:bg-slate-100 border">重复依赖</button>
+    <button data-tab="bloat" class="tab px-4 py-2 rounded-full text-sm font-medium bg-white text-slate-600 hover:bg-slate-100 border">膨胀分析</button>
+    <button data-tab="suggestions" class="tab px-4 py-2 rounded-full text-sm font-medium bg-white text-slate-600 hover:bg-slate-100 border">优化建议</button>
+    <button data-tab="security" class="tab px-4 py-2 rounded-full text-sm font-medium bg-white text-slate-600 hover:bg-slate-100 border">安全</button>
+  </div>
+
+  <div id="loading" class="bg-white rounded-xl p-12 text-center text-slate-500">⏳ 加载中...</div>
+  <div id="errorBox" class="hidden bg-amber-50 border border-amber-200 rounded-xl p-8 text-center">
+    <div id="errorMsg" class="text-amber-700 font-medium"></div>
+    <p class="text-sm text-slate-600 mt-2">请先在项目根目录运行 <code class="bg-slate-100 px-2 py-1 rounded">nodeslim scan</code> 生成报告，或点击“一键扫描”</p>
+    <button onclick="triggerScan()" class="mt-4 bg-amber-500 text-white px-6 py-2 rounded-lg font-medium">立即扫描</button>
+  </div>
+
+  <div id="content" class="hidden">
+    <!-- Overview -->
+    <div id="panel-overview">
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <div class="bg-white rounded-xl p-5 shadow-sm border"><div class="text-xs font-semibold tracking-wider text-slate-500 uppercase">总包数</div><div id="statPackages" class="text-2xl font-bold mt-1">—</div><div class="text-xs text-slate-500">packages</div></div>
+        <div class="bg-white rounded-xl p-5 shadow-sm border"><div class="text-xs font-semibold tracking-wider text-slate-500 uppercase">总体积</div><div id="statSize" class="text-2xl font-bold mt-1 text-green-600">—</div><div id="statFiles" class="text-xs text-slate-500">—</div></div>
+        <div class="bg-white rounded-xl p-5 shadow-sm border"><div class="text-xs font-semibold tracking-wider text-slate-500 uppercase">重复依赖</div><div id="statDup" class="text-2xl font-bold mt-1">—</div><div id="statWasted" class="text-xs text-slate-500">—</div></div>
+        <div class="bg-white rounded-xl p-5 shadow-sm border"><div class="text-xs font-semibold tracking-wider text-slate-500 uppercase">可优化</div><div id="statOpt" class="text-2xl font-bold mt-1 text-amber-600">—</div><div class="text-xs text-slate-500">estimated</div></div>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        <div class="bg-white rounded-xl p-6 shadow-sm border">
+          <h3 class="font-bold mb-3">📊 体积分布 (Top 10)</h3>
+          <div id="topList" class="space-y-2"></div>
+          <canvas id="pieChart" height="220" class="mt-4"></canvas>
+        </div>
+        <div class="bg-white rounded-xl p-6 shadow-sm border">
+          <h3 class="font-bold mb-3">🗂️ 按类别聚合</h3>
+          <div id="catList" class="space-y-3"></div>
+          <div class="mt-6">
+            <h4 class="font-semibold text-sm mb-2">💡 快速操作</h4>
+            <div class="grid grid-cols-2 gap-2 text-xs">
+              <div class="bg-slate-900 text-slate-100 rounded-lg p-2"><div class="text-[10px] text-slate-400 uppercase">清理预览</div><code class="font-mono">nodeslim optimize --clean --dry-run</code></div>
+              <div class="bg-slate-900 text-slate-100 rounded-lg p-2"><div class="text-[10px] text-slate-400 uppercase">迁移 pnpm</div><code class="font-mono">nodeslim optimize --migrate pnpm</code></div>
+              <div class="bg-slate-900 text-slate-100 rounded-lg p-2"><div class="text-[10px] text-slate-400 uppercase">深度分析</div><code class="font-mono">nodeslim analyze --duplicates</code></div>
+              <div class="bg-slate-900 text-slate-100 rounded-lg p-2"><div class="text-[10px] text-slate-400 uppercase">生成报告</div><code class="font-mono">nodeslim report --export html</code></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl p-6 shadow-sm border">
+        <h3 class="font-bold mb-3">💡 优化建议（Top 5）</h3>
+        <div id="sugList" class="space-y-3"></div>
+      </div>
+    </div>
+
+    <!-- Packages -->
+    <div id="panel-packages" class="hidden bg-white rounded-xl shadow-sm border overflow-hidden">
+      <div class="p-4 flex items-center justify-between border-b">
+        <h3 class="font-bold">📦 全部包 — 按体积排序</h3>
+        <input id="pkgSearch" placeholder="搜索包名..." class="border rounded-lg px-3 py-1.5 text-sm w-64" />
+      </div>
+      <div class="overflow-auto max-h-[70vh]">
+        <table class="w-full text-sm">
+          <thead class="bg-slate-50 sticky top-0"><tr class="text-left text-slate-600"><th class="p-3">#</th><th class="p-3">包名</th><th class="p-3 text-right">体积</th><th class="p-3 text-right">文件</th><th class="p-3">类型</th><th class="p-3">安装</th></tr></thead>
+          <tbody id="pkgBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Duplicates -->
+    <div id="panel-duplicates" class="hidden bg-white rounded-xl shadow-sm border overflow-hidden">
+      <div class="p-4 border-b"><h3 class="font-bold">♻️ 重复依赖</h3><p class="text-sm text-slate-500">同一包被多版本/多路径安装，浪费磁盘；建议用 overrides/resolutions 统一版本或迁移 pnpm。</p></div>
+      <div id="dupContent"></div>
+    </div>
+
+    <!-- Bloat -->
+    <div id="panel-bloat" class="hidden bg-white rounded-xl shadow-sm border overflow-hidden">
+      <div class="p-4 border-b"><h3 class="font-bold">🐘 膨胀包</h3></div>
+      <div id="bloatContent"></div>
+    </div>
+
+    <!-- Suggestions -->
+    <div id="panel-suggestions" class="hidden space-y-3"></div>
+
+    <!-- Security -->
+    <div id="panel-security" class="hidden bg-white rounded-xl shadow-sm border overflow-hidden">
+      <div class="p-4 border-b"><h3 class="font-bold">🔒 安全扫描</h3></div>
+      <div id="secContent"></div>
+    </div>
+  </div>
+</div>
+
+<footer class="text-center text-slate-400 text-xs py-8">Generated by NodeSlim • <a href="https://github.com/your-org/nodeslim" class="text-[#667eea] hover:underline">GitHub</a></footer>
+
+<script>
+function formatBytes(bytes){
+  if(bytes==null||isNaN(bytes)) return '-';
+  if(bytes===0) return '0 B';
+  const k=1024, sizes=['B','KB','MB','GB'];
+  const i=Math.floor(Math.log(bytes)/Math.log(k));
+  return `${parseFloat((bytes/Math.pow(k,i)).toFixed(2))} ${sizes[i]}`;
+}
+let DATA=null;
+let pieChart=null;
+
+async function fetchLatest(){
+  const loading=document.getElementById('loading');
+  const errBox=document.getElementById('errorBox');
+  const content=document.getElementById('content');
+  loading.classList.remove('hidden');
+  errBox.classList.add('hidden');
+  content.classList.add('hidden');
+  try{
+    const res=await fetch('/api/report/latest');
+    if(!res.ok) throw new Error((await res.json()).error||res.statusText);
+    DATA=await res.json();
+    render(DATA);
+    loading.classList.add('hidden');
+    content.classList.remove('hidden');
+  }catch(e){
+    loading.classList.add('hidden');
+    errBox.classList.remove('hidden');
+    document.getElementById('errorMsg').textContent='⚠️ '+e.message;
+  }
+}
+async function triggerScan(){
+  const btn=document.getElementById('btnScan');
+  btn.disabled=true; btn.textContent='⏳ 扫描中...';
+  try{
+    const res=await fetch('/api/scan');
+    if(!res.ok) throw new Error((await res.json()).error);
+    await fetchLatest();
+  }catch(e){
+    alert('扫描失败: '+e.message);
+  }finally{ btn.disabled=false; btn.textContent='⚡ 一键扫描'; }
+}
+function render(data){
+  const s=data.summary||data;
+  const pkgs=data.packages||[];
+  const dups=data.duplicates||[];
+  const bloat=data.bloat||[];
+  const sugs=data.suggestions||[];
+  const secs=data.security|| (data.issues||[]).filter(i=>i.type==='SECURITY');
+  document.getElementById('meta').textContent=(data.meta?.root||'')+'  |  '+(data.meta?.packageManager||'')+'  |  '+(data.meta?.generatedAt?new Date(data.meta.generatedAt).toLocaleString('zh-CN'):'');
+  document.getElementById('statPackages').textContent=s.totalPackages??pkgs.length;
+  document.getElementById('statSize').textContent=formatBytes(s.totalSize);
+  document.getElementById('statFiles').textContent=(s.totalFiles||'')+' files';
+  document.getElementById('statDup').textContent=s.duplicateCount??dups.length;
+  document.getElementById('statDup').className='text-2xl font-bold mt-1 '+( (s.duplicateCount||dups.length)>0?'text-red-600':'text-green-600');
+  document.getElementById('statWasted').textContent='浪费 '+formatBytes(s.wastedSize||dups.reduce((a,b)=>a+(b.wastedSize||0),0));
+  document.getElementById('statOpt').textContent=formatBytes(s.optimizableSize);
+
+  // Top 10
+  const top10=[...pkgs].sort((a,b)=>b.size-a.size).slice(0,10);
+  const topList=document.getElementById('topList');
+  topList.innerHTML='';
+  const max=top10[0]?.size||1;
+  top10.forEach((p,i)=>{
+    const pct=Math.round(p.size/max*100);
+    const el=document.createElement('div');
+    el.className='flex items-center gap-3';
+    el.innerHTML=`<span class="w-6 text-xs text-slate-500">${i+1}</span><span class="flex-1 text-sm font-medium truncate" title="${p.name}">${p.name}<span class="text-slate-400">@${p.version}</span></span><div class="w-32 h-3 bg-slate-100 rounded-full overflow-hidden"><div class="h-full bar-gradient" style="width:${pct}%"></div></div><span class="w-20 text-right text-sm font-mono">${formatBytes(p.size)}</span>`;
+    topList.appendChild(el);
+  });
+
+  // Pie chart by category
+  const byCat=pkgs.reduce((acc,p)=>{const c=p.category||'unknown';acc[c]=(acc[c]||0)+p.size;return acc;},{});
+  const catEntries=Object.entries(byCat).sort((a,b)=>b[1]-a[1]).slice(0,6);
+  const catList=document.getElementById('catList');
+  catList.innerHTML='';
+  catEntries.forEach(([cat,size])=>{
+    const total=s.totalSize||1;
+    const pct=(size/total*100).toFixed(1);
+    const colors={framework:'bg-blue-500','build-tool':'bg-green-500','utility':'bg-orange-500','types':'bg-slate-400','testing':'bg-red-500','library':'bg-purple-500','unknown':'bg-slate-400'};
+    const row=document.createElement('div');
+    row.className='flex items-center gap-3';
+    row.innerHTML=`<span class="px-2 py-0.5 rounded-full text-xs font-medium text-white ${colors[cat]||'bg-slate-400'}">${cat}</span><div class="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden"><div class="h-full bg-slate-600" style="width:${pct}%"></div></div><span class="text-sm font-mono w-32 text-right">${formatBytes(size)} (${pct}%)</span>`;
+    catList.appendChild(row);
+  });
+  // Chart.js pie
+  try{
+    const ctx=document.getElementById('pieChart').getContext('2d');
+    if(pieChart) pieChart.destroy();
+    pieChart=new Chart(ctx,{type:'doughnut',data:{labels:catEntries.map(e=>e[0]),datasets:[{data:catEntries.map(e=>e[1]),backgroundColor:['#667eea','#48bb78','#ed8936','#4299e1','#ed64a6','#38b2ac']}]},options:{plugins:{legend:{position:'bottom'}},cutout:'55%'}});
+  }catch{}
+
+  // Suggestions top 5
+  const sugList=document.getElementById('sugList');
+  sugList.innerHTML='';
+  const colorsMap={REPLACE:'#4299e1',MIGRATION:'#48bb78',CLEAN:'#ed8936'};
+  sugs.slice(0,5).forEach(s=>{
+    const div=document.createElement('div');
+    div.className='border rounded-lg p-4 border-l-4';
+    div.style.borderLeftColor=colorsMap[s.type]||'#a0aec0';
+    div.innerHTML=`<div class="font-medium text-sm"><span class="text-xs bg-slate-100 px-2 py-0.5 rounded mr-2">${s.type}</span>${esc(s.message)}</div><div class="text-sm text-slate-600 mt-1">→ ${esc(s.suggestion)}</div>${s.estimatedSavings?`<div class="text-sm text-green-600 mt-1">预计节省: <b>${esc(String(s.estimatedSavings))}</b></div>`:''}`;
+    sugList.appendChild(div);
+  });
+  if(sugs.length===0) sugList.innerHTML='<div class="text-center text-slate-500 py-6">暂无建议</div>';
+
+  // Packages table
+  const pkgBody=document.getElementById('pkgBody');
+  function renderPkg(filter=''){
+    pkgBody.innerHTML='';
+    const sorted=[...pkgs].sort((a,b)=>b.size-a.size).filter(p=>!filter||p.name.toLowerCase().includes(filter.toLowerCase()));
+    sorted.forEach((p,i)=>{
+      const catColors={framework:'bg-blue-500','build-tool':'bg-green-500','utility':'bg-orange-500','types':'bg-slate-400','testing':'bg-red-500','library':'bg-purple-500'};
+      const tr=document.createElement('tr');
+      tr.className='border-t hover:bg-slate-50';
+      tr.innerHTML=`<td class="p-3 text-slate-500">${i+1}</td><td class="p-3 font-mono">${esc(p.name)}<span class="text-slate-400">@${esc((p.version||'').slice(0,12))}</span></td><td class="p-3 text-right font-mono">${formatBytes(p.size)}</td><td class="p-3 text-right">${p.fileCount}</td><td class="p-3"><span class="px-2 py-0.5 rounded-full text-xs text-white ${catColors[p.category]||'bg-slate-400'}">${esc(p.category)}</span></td><td class="p-3">${p.installCount>1?`<span class="text-red-600 font-bold">${p.installCount}×</span>`:'1'}</td>`;
+      pkgBody.appendChild(tr);
+    });
+  }
+  renderPkg();
+  document.getElementById('pkgSearch').oninput=(e)=>renderPkg(e.target.value);
+
+  // Duplicates
+  const dupContent=document.getElementById('dupContent');
+  if(dups.length===0) dupContent.innerHTML='<div class="p-12 text-center text-green-600">✅ 无重复依赖 — 依赖去重良好</div>';
+  else{
+    let html='<div class="overflow-auto"><table class="w-full text-sm"><thead class="bg-slate-50"><tr class="text-left text-slate-600"><th class="p-3">包名</th><th class="p-3">次数</th><th class="p-3">版本</th><th class="p-3 text-right">总计</th><th class="p-3 text-right">浪费</th></tr></thead><tbody>';
+    dups.forEach(d=>{html+=`<tr class="border-t hover:bg-slate-50"><td class="p-3 font-mono font-medium">${esc(d.packageName)}</td><td class="p-3 text-red-600 font-bold">${d.count}×</td><td class="p-3 font-mono text-xs">${esc(d.versions.join(', '))}</td><td class="p-3 text-right font-mono">${formatBytes(d.totalSize)}</td><td class="p-3 text-right font-mono text-red-600">${formatBytes(d.wastedSize)}</td></tr>`;});
+    html+='</tbody></table></div>';
+    dupContent.innerHTML=html;
+  }
+
+  // Bloat
+  const bloatContent=document.getElementById('bloatContent');
+  if(bloat.length===0) bloatContent.innerHTML='<div class="p-12 text-center text-green-600">✅ 无膨胀包</div>';
+  else{
+    let html='<table class="w-full text-sm"><thead class="bg-slate-50"><tr class="text-left text-slate-600"><th class="p-3">包名</th><th class="p-3 text-right">体积</th><th class="p-3">文件</th><th class="p-3">级别</th><th class="p-3">原因</th></tr></thead><tbody>';
+    bloat.forEach(b=>{const cls=b.severity==='critical'?'bg-red-100 text-red-700':b.severity==='warning'?'bg-amber-100 text-amber-700':'bg-blue-100 text-blue-700'; html+=`<tr class="border-t hover:bg-slate-50"><td class="p-3 font-mono">${esc(b.name)}@${esc(b.version)}</td><td class="p-3 text-right font-mono">${esc(b.sizeFormatted||formatBytes(b.size))}</td><td class="p-3">${b.fileCount}</td><td class="p-3"><span class="px-2 py-0.5 rounded text-xs font-bold ${cls}">${esc(b.severity)}</span></td><td class="p-3 text-slate-600">${esc(b.reason)}</td></tr>`;});
+    html+='</tbody></table>'; bloatContent.innerHTML=html;
+  }
+
+  // Suggestions full
+  const sugPanel=document.getElementById('panel-suggestions');
+  sugPanel.innerHTML='';
+  sugs.forEach(s=>{
+    const div=document.createElement('div');
+    div.className='bg-white rounded-xl p-5 shadow-sm border border-l-4';
+    div.style.borderLeftColor=colorsMap[s.type]||'#a0aec0';
+    div.innerHTML=`<div class="flex items-start justify-between gap-4"><div><div class="font-bold text-sm flex items-center gap-2"><span class="bg-slate-100 px-2 py-0.5 rounded text-xs">${esc(s.type)}</span>${s.packageName?`<span class="font-mono text-[#667eea]">${esc(s.packageName)}</span>`:''}</div><div class="mt-1 text-sm">${esc(s.message)}</div><div class="mt-2 text-sm text-slate-600">💡 ${esc(s.suggestion)}</div></div>${s.estimatedSavings?`<span class="shrink-0 bg-green-50 text-green-700 px-3 py-1 rounded-full text-xs font-bold">节省 ${esc(String(s.estimatedSavings))}</span>`:''}</div>`;
+    sugPanel.appendChild(div);
+  });
+  if(sugs.length===0) sugPanel.innerHTML='<div class="bg-white rounded-xl p-12 text-center text-slate-500">暂无建议</div>';
+
+  // Security
+  const secContent=document.getElementById('secContent');
+  if(secs.length===0) secContent.innerHTML='<div class="p-12 text-center text-green-600">✅ 未发现已知漏洞</div>';
+  else{
+    let html='<table class="w-full text-sm"><thead class="bg-slate-50"><tr class="text-left text-slate-600"><th class="p-3">级别</th><th class="p-3">包名</th><th class="p-3">问题</th><th class="p-3">建议</th></tr></thead><tbody>';
+    secs.forEach(s=>{const cls=String(s.severity).toLowerCase()==='critical'?'bg-red-100 text-red-700':String(s.severity).toLowerCase()==='warning'?'bg-amber-100 text-amber-700':'bg-blue-100 text-blue-700'; html+=`<tr class="border-t hover:bg-slate-50"><td class="p-3"><span class="px-2 py-0.5 rounded text-xs font-bold ${cls}">${esc(s.severity)}</span></td><td class="p-3 font-mono">${esc(s.packageName||'—')}</td><td class="p-3">${esc(s.message)}</td><td class="p-3 text-slate-600">${esc(s.suggestion||'')}</td></tr>`;});
+    html+='</tbody></table>'; secContent.innerHTML=html;
+  }
+}
+function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+document.getElementById('btnRefresh').addEventListener('click',fetchLatest);
+document.getElementById('btnScan').addEventListener('click',triggerScan);
+document.querySelectorAll('.tab').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    document.querySelectorAll('.tab').forEach(b=>{b.classList.remove('bg-[#667eea]','text-white','shadow'); b.classList.add('bg-white','text-slate-600','border')});
+    btn.classList.add('bg-[#667eea]','text-white','shadow'); btn.classList.remove('bg-white','text-slate-600','border');
+    const tab=btn.dataset.tab;
+    ['overview','packages','duplicates','bloat','suggestions','security'].forEach(k=>{
+      document.getElementById('panel-'+k).classList.toggle('hidden',k!==tab);
+    });
+  });
+});
+fetchLatest();
+</script>
+</body>
+</html>

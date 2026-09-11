@@ -1,0 +1,46 @@
+{
+  "version": "1.0.0",
+  "scan": {
+    "target": ".",
+    "maxDepth": 10,
+    "exclude": ["node_modules/.cache", "node_modules/.bin"],
+    "includeDevDependencies": true
+  },
+  "thresholds": {
+    "totalSizeMB": 100,
+    "maxPackageSizeMB": 10,
+    "maxDuplicateCount": 5,
+    "maxBloatRatio": 0.3
+  },
+  "clean": {
+    "enabled": true,
+    "patterns": [
+      "test",
+      "tests",
+      "__tests__",
+      "docs",
+      "doc",
+      "*.md",
+      "*.map",
+      ".github",
+      ".travis.yml",
+      ".circleci"
+    ],
+    "excludePackages": ["@types/*"]
+  },
+  "optimize": {
+    "suggestReplacements": true,
+    "suggestMigration": true,
+    "autoApplySafe": false
+  },
+  "report": {
+    "format": "html",
+    "outputDir": ".nodeslim/reports",
+    "keepHistory": 10
+  },
+  "ci": {
+    "failOnThreshold": true,
+    "commentOnPR": true,
+    "uploadArtifact": true
+  }
+}

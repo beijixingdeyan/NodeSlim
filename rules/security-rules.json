@@ -1,0 +1,36 @@
+{
+  "version": "1.0.0",
+  "checks": [
+    {
+      "id": "known-vuln",
+      "name": "已知漏洞包",
+      "description": "检测已知存在漏洞的包版本",
+      "severity": "critical",
+      "packages": [
+        { "name": "lodash", "vulnerable": "<4.17.21", "cve": "CVE-2021-23337", "fix": "升级到 4.17.21+" },
+        { "name": "minimist", "vulnerable": "<1.2.6", "cve": "CVE-2021-44906", "fix": "升级到 1.2.6+" },
+        { "name": "node-fetch", "vulnerable": "<2.6.7", "cve": "CVE-2022-0235", "fix": "升级到 2.6.7+" },
+        { "name": "ansi-regex", "vulnerable": "<5.0.1", "cve": "CVE-2021-3807", "fix": "升级到 5.0.1+" },
+        { "name": "glob-parent", "vulnerable": "<5.1.2", "cve": "CVE-2020-28469", "fix": "升级到 5.1.2+" }
+      ]
+    },
+    {
+      "id": "deprecated",
+      "name": "已废弃包",
+      "description": "检测已废弃的包",
+      "severity": "warning",
+      "packages": [
+        { "name": "request", "message": "request 已废弃，请使用 fetch 或 axios" },
+        { "name": "urllib-sync", "message": "同步网络请求已废弃" },
+        { "name": "babel-core", "message": "请迁移到 @babel/core" }
+      ]
+    },
+    {
+      "id": "suspicious",
+      "name": "可疑脚本",
+      "description": "检测包含 install 脚本的可疑包",
+      "severity": "info",
+      "check": "package.scripts.postinstall || package.scripts.preinstall"
+    }
+  ]
+}

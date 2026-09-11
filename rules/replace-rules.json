@@ -1,0 +1,69 @@
+{
+  "version": "1.0.0",
+  "replacements": [
+    {
+      "from": "moment",
+      "to": "dayjs",
+      "reason": "moment 已进入维护模式，dayjs 体积仅 6KB（moment 290KB）",
+      "api_compat": "95%",
+      "migration_effort": "low",
+      "estimated_savings": "284KB"
+    },
+    {
+      "from": "lodash",
+      "to": "es-toolkit",
+      "reason": "es-toolkit 是现代、高性能的 lodash 替代品，tree-shakeable",
+      "api_compat": "90%",
+      "migration_effort": "medium",
+      "estimated_savings": "60KB"
+    },
+    {
+      "from": "jquery",
+      "to": "native-dom",
+      "reason": "现代浏览器已原生支持 jQuery 的大部分功能",
+      "api_compat": "N/A",
+      "migration_effort": "high",
+      "estimated_savings": "87KB"
+    },
+    {
+      "from": "axios",
+      "to": "fetch",
+      "reason": "Node.js 18+ 和浏览器原生支持 fetch API",
+      "api_compat": "80%",
+      "migration_effort": "medium",
+      "estimated_savings": "50KB"
+    },
+    {
+      "from": "uuid",
+      "to": "crypto.randomUUID",
+      "reason": "Node.js 14.17+ 和浏览器原生支持 crypto.randomUUID()",
+      "api_compat": "100%",
+      "migration_effort": "low",
+      "estimated_savings": "12KB"
+    },
+    {
+      "from": "chalk",
+      "to": "picocolors",
+      "reason": "picocolors 是 chalk 的轻量替代，仅 2KB",
+      "api_compat": "85%",
+      "migration_effort": "low",
+      "estimated_savings": "18KB"
+    },
+    {
+      "from": "commander",
+      "to": "citty",
+      "reason": "citty 是现代化、类型安全的 CLI 框架",
+      "api_compat": "70%",
+      "migration_effort": "medium",
+      "estimated_savings": "25KB"
+    },
+    {
+      "from": "core-js",
+      "to": "native",
+      "reason": "现代 Node/Browser 已支持大多数 ES 特性，无需 core-js polyfill",
+      "api_compat": "N/A",
+      "migration_effort": "medium",
+      "estimated_savings": "200KB"
+    }
+  ]
+}

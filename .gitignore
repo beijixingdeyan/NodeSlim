@@ -1,0 +1,70 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Build / Dist
+dist/
+build/
+.web-dist/
+.nodeslim/
+.nodeslim-reports/
+reports/
+
+# Requirement docs (private, not for GitHub)
+nodeslim_project.md
+node_modules_optimization.md
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Runtime
+.DS_Store
+Thumbs.db
+.env
+.env.local
+.env.*.local
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Test / Coverage
+coverage/
+.nyc_output/
+*.lcov
+
+# Cache
+.cache/
+.parcel-cache/
+.eslintcache
+.stylelintcache
+.turbo/
+.vite/
+# Keep prebuilt dashboard (one-click without build), ignore vite cache only
+web/dist/*
+!web/dist/index.html
+web/node_modules/
+
+# OS
+.DS_Store
+desktop.ini
+
+# Rust (if used)
+target/
+Cargo.lock
+
+# Misc
+tmp/
+temp/
+*.tmp
+*.tgz
+*.tar.gz

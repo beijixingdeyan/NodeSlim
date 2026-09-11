@@ -1,0 +1,63 @@
+{
+  "version": "1.0.0",
+  "rules": [
+    {
+      "id": "remove-tests",
+      "name": "删除测试文件",
+      "description": "删除 test、tests、__tests__、spec 等目录",
+      "patterns": ["**/test", "**/tests", "**/__tests__", "**/*.test.js", "**/*.spec.js", "**/*.test.ts", "**/*.spec.ts"],
+      "severity": "safe",
+      "estimated_savings": "5-15%"
+    },
+    {
+      "id": "remove-docs",
+      "name": "删除文档",
+      "description": "删除 README、CHANGELOG、docs 等文档",
+      "patterns": ["**/README*", "**/CHANGELOG*", "**/HISTORY*", "**/docs", "**/doc", "**/*.md"],
+      "severity": "safe",
+      "estimated_savings": "1-3%"
+    },
+    {
+      "id": "remove-ci-config",
+      "name": "删除 CI 配置",
+      "description": "删除 .github、.travis.yml 等 CI 配置",
+      "patterns": ["**/.github", "**/.travis.yml", "**/.circleci", "**/appveyor.yml"],
+      "severity": "safe",
+      "estimated_savings": "0.5-1%"
+    },
+    {
+      "id": "remove-source-maps",
+      "name": "删除 Source Map",
+      "description": "删除 .map 文件（生产环境不需要）",
+      "patterns": ["**/*.map"],
+      "severity": "safe",
+      "estimated_savings": "2-5%"
+    },
+    {
+      "id": "remove-typescript-defs",
+      "name": "删除 TypeScript 类型定义",
+      "description": "删除 .d.ts 文件（JS 项目不需要）",
+      "patterns": ["**/*.d.ts"],
+      "severity": "warning",
+      "condition": "project_type == 'javascript'",
+      "estimated_savings": "3-8%"
+    },
+    {
+      "id": "remove-examples",
+      "name": "删除示例",
+      "description": "删除 example、examples 目录",
+      "patterns": ["**/example", "**/examples"],
+      "severity": "safe",
+      "estimated_savings": "1-2%"
+    },
+    {
+      "id": "remove-platform-bins",
+      "name": "删除非当前平台二进制",
+      "description": "删除其他平台的 esbuild 等二进制文件",
+      "patterns": ["**/esbuild-darwin-*", "**/esbuild-linux-*", "**/esbuild-windows-*", "**/esbuild-freebsd-*"],
+      "severity": "warning",
+      "condition": "detect_current_platform",
+      "estimated_savings": "5-15%"
+    }
+  ]
+}

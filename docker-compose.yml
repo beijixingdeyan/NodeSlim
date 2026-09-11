@@ -1,0 +1,15 @@
+version: '3.8'
+services:
+  nodeslim:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      # Mount current project for scanning; remove if you only need the dashboard
+      - ./:/app/target:ro
+    environment:
+      - PORT=3000
+    command: node src/server/index.js --port 3000 --target /app/target
+    # If you want persistent reports:
+    # volumes:
+    #   - ./.nodeslim:/app/.nodeslim

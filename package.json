@@ -1,0 +1,56 @@
+{
+  "name": "nodeslim",
+  "version": "1.2.0",
+  "description": "NodeSlim — 从 850MB 到 50MB，一键诊断，智能优化。A one-stop diagnostic & optimization toolkit for node_modules.",
+  "keywords": [
+    "node_modules",
+    "optimization",
+    "bundle",
+    "pnpm",
+    "cli",
+    "dependency",
+    "bloat",
+    "duplicate",
+    "clean"
+  ],
+  "author": "NodeSlim Team",
+  "license": "MIT",
+  "type": "commonjs",
+  "bin": {
+    "nodeslim": "./bin/nodeslim.js"
+  },
+  "main": "./src/index.js",
+  "scripts": {
+    "start": "node bin/nodeslim.js",
+    "dev": "node bin/nodeslim.js scan --target .",
+    "test": "node --test test/*.test.js",
+    "dashboard": "node src/server/index.js",
+    "build:web": "npm --prefix web run build",
+    "lint": "eslint src/ bin/ --ext .js",
+    "prepublishOnly": "npm run build:web || echo \"web build skipped\""
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "packageManager": "npm@10.9.8",
+  "dependencies": {
+    "chalk": "^4.1.2",
+    "cli-table3": "^0.6.5",
+    "commander": "^11.1.0",
+    "glob": "^10.3.10",
+    "js-yaml": "^4.1.0",
+    "ora": "^5.4.1",
+    "semver": "^7.6.3"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/nodeslim.git"
+  },
+  "homepage": "https://github.com/your-org/nodeslim#readme",
+  "bugs": {
+    "url": "https://github.com/your-org/nodeslim/issues"
+  }
+}
