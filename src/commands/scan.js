@@ -15,24 +15,62 @@ async function scanAction(opts) {
 
   const output = (opts.output || 'terminal').toLowerCase();
   const saveReportFlag = opts.saveReport || opts.save || output !== 'terminal';
+  const isShallow = opts.shallow || opts.quick;
 
-  const spinner = ora(`正在扫描 ${chalk.cyan(target)} ...`).start();
+  const spinner = ora(`正在${isShallow ? '少扫描' : '扫描'} ${chalk.cyan(target)} ${isShallow ? chalk.dim('(仅 package.json/lockfile, 秒级)') : ''}...`).start();
   let result;
   try {
-    result = await scanProject(target, {
-      config,
-      maxDepth: opts.depth ? parseInt(opts.depth, 10) : undefined,
-      onProgress: (n) => { spinner.text = `正在扫描 ... 已发现 ${n} 文件`; },
-    });
-
-    // enrich with security & bundle
-    if (result.packages?.length) {
-      result.security = scanSecurity(result.packages);
-      result.issues = [...(result.issues || []), ...result.security];
+    if (isShallow) {
+      const { shallowScan } = require('../analyzer/shallow-scanner');
+      const shallow = shallowScan(target);
+      const { getSuggestions } = require('../analyzer/suggestions');
+      const pkgs = shallow.packages;
+      const suggestions = getSuggestions(pkgs);
+      result = {
+        root: target,
+        nodeModulesPath: null,
+        exists: false,
+        shallow: true,
+        isEstimated: true,
+        packages: pkgs,
+        totalPackages: pkgs.length,
+        totalSize: shallow.totalSize,
+        totalFiles: 0,
+        duplicates: [],
+        bloat: [],
+        issues: [],
+        suggestions,
+        wastedSize: 0,
+        optimizableSize: shallow.totalSize * 0.2,
+        packageManager: shallow.lockInfo?.type || 'unknown',
+        pkgJson: shallow.pj,
+        lock: shallow.lockInfo,
+        summary: { totalPackages: pkgs.length, totalSize: shallow.totalSize, totalFiles: 0, duplicateCount: 0, bloatCount: 0, optimizableSize: shallow.totalSize*0.2, wastedSize: 0, isEstimated: true },
+        scannedAt: shallow.scannedAt,
+        warnings: shallow.warnings,
+        meta: { root: target, packageManager: shallow.lockInfo?.type || 'unknown', generatedAt: new Date().toISOString(), version: require('../../package.json').version },
+      };
+      result.bundle = analyzeBundle(target);
+      spinner.succeed(`少扫描完成！发现 ${chalk.bold(result.totalPackages)} 个声明依赖，估算总体积 ${chalk.bold(formatBytes(result.totalSize))} ${chalk.dim('(无需 node_modules)')}`);
+      if (shallow.warnings?.length) shallow.warnings.forEach(w => console.log(chalk.yellow('  ⚠️ ' + w)));
+    } else {
+      result = await scanProject(target, {
+        config,
+        maxDepth: opts.depth ? parseInt(opts.depth, 10) : undefined,
+        onProgress: (n) => { spinner.text = `正在扫描 ... 已发现 ${n} 文件`; },
+      });
+      if (result.packages?.length) {
+        result.security = scanSecurity(result.packages);
+        result.issues = [...(result.issues || []), ...result.security];
+      }
+      result.bundle = analyzeBundle(target);
+      // enrich with prod/platform for terminal summary count
+      try {
+        const { analyzeProdVsDev } = require('../analyzer/prod-analyzer');
+        result.prod = analyzeProdVsDev(target, result.packages || []);
+      } catch {}
+      spinner.succeed(`扫描完成！发现 ${chalk.bold(result.totalPackages)} 个包，总体积 ${chalk.bold(formatBytes(result.totalSize))} ${result.exists ? '' : chalk.yellow('(仅 package.json 分析)')}`);
     }
-    result.bundle = analyzeBundle(target);
-
-    spinner.succeed(`扫描完成！发现 ${chalk.bold(result.totalPackages)} 个包，总体积 ${chalk.bold(formatBytes(result.totalSize))} ${result.exists ? '' : chalk.yellow('(仅 package.json 分析)')}`);
 
     // Handle output formats
     if (output === 'json') {
@@ -41,7 +79,6 @@ async function scanAction(opts) {
         console.log(JSON.stringify(result.packages ? { summary: result.summary || { totalPackages: result.totalPackages, totalSize: result.totalSize }, packages: result.packages } : result, null, 2));
         console.log(chalk.green(`\n✅ JSON 报告已保存: ${p}`));
       } else {
-        // just print json to stdout
         const { buildReport } = require('../reporter/json-reporter');
         console.log(JSON.stringify(buildReport(result), null, 2));
       }
@@ -63,7 +100,6 @@ async function scanAction(opts) {
       return result;
     }
 
-    // terminal (default)
     terminal.printFullReport(result);
 
     if (saveReportFlag) {
@@ -73,20 +109,15 @@ async function scanAction(opts) {
       console.log(`   HTML: ${chalk.cyan(results.html.path)}`);
       console.log(`   Markdown: ${chalk.cyan(results.markdown.path)}`);
     } else {
-      // still save latest.json silently for dashboard
       try {
         await saveJsonReport(result, { outputDir: path.join(target, '.nodeslim/reports') });
         console.log(chalk.dim(`\n  (已静默保存快照到 .nodeslim/reports/latest.json — dashboard 可直接读取)`));
       } catch {}
     }
 
-    // threshold check
     const thresholdMB = config.thresholds?.totalSizeMB;
     if (thresholdMB && result.totalSize > thresholdMB * 1024 * 1024) {
       console.log(chalk.yellow(`\n⚠️  体积超出阈值: ${formatBytes(result.totalSize)} > ${thresholdMB}MB (配置于 .nodeslimrc.json)`));
-      if (config.ci?.failOnThreshold) {
-        // don't exit with error by default for CLI, just warn
-      }
     }
 
     return result;

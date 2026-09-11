@@ -15,17 +15,22 @@ NodeSlim 是一个**一站式 `node_modules` 诊断与优化工具**：一个命
 | 功能 | 说明 |
 |------|------|
 | **体积扫描** | 递归遍历 `node_modules`，按包聚合体积与文件数，支持 `npm/pnpm/yarn/bun` |
+| **少扫描** | `nodeslim scan --shallow` 仅解析 `package.json/lockfile`，秒级估算，无需 `node_modules`，前端可直接拖拽文件夹/JSON 进行本地少扫描 |
 | **依赖树分析** | 解析 `package.json` + lockfile，识别直接/间接/dev 依赖，标记重复与深度 |
-| **重复检测** | 找出多版本/多路径安装，计算“浪费体积” |
+| **重复检测** | 找出多版本/多路径安装，计算“浪费体积”，一键生成 `overrides/resolutions` 去重方案 |
 | **膨胀检测** | 超阈值大包 + 文件数过多包，定位 `test/docs/.github` 等冗余 |
 | **冗余清理** | 安全规则一键清理 `test, docs, *.md, *.map, .github` 等，支持 `--dry-run` 预览 |
+| **Prod/Dev 分离** | `nodeslim analyze --prod` / `optimize --prune-dev` 量化生产与开发体积，Docker 多阶段构建建议 |
+| **按需/ESM/平台** | `analyze --unused --on-demand --esm --platform` 检测未使用/幽灵依赖、全量 lodash、CommonJS 与平台二进制冗余 |
 | **优化建议** | 内置替换规则库：`moment→dayjs、lodash→es-toolkit、axios→fetch` 等 |
 | **包管理器迁移** | `npm ↔ pnpm ↔ yarn ↔ bun` 一键计划与备份，支持 `--force` 自动执行 |
 | **Bundle 分析** | 检测 `dist/build/.next` 产物，提示拆包与压缩建议 |
+| **Import Maps** | `optimize --import-maps` 生成 `esm.sh` CDN 的零安装 Import Maps，支持 Deno/浏览器 |
 | **安全扫描** | 检测已知漏洞版本 (`lodash`, `minimist` 等) 与可疑安装脚本 |
+| **全量审计** | `nodeslim audit` 一站式审计（安全+未使用+按需+ESM+平台+治理） |
 | **报告导出** | `JSON / HTML (可视化) / Markdown` 三格式，历史对比 |
-| **Web 面板** | 本地 `nodeslim dashboard` 启动可视化，零配置，支持 Chart.js 饼图与实时扫描 |
-| **CI 集成** | 开箱即用 GitHub Actions，阈值告警与 PR 评论 |
+| **Web 面板** | 本地 `nodeslim dashboard` 启动可视化，支持拖拽导入文件夹/JSON 进行少扫描、`?target=` 切换项目、Chart.js 饼图与去重/Import Maps 可视化 |
+| **CI 集成** | 开箱即用 GitHub Actions，阈值告警与 PR 评论，`scripts/check-size.js` 自助阈值检查 |
 
 ---
 

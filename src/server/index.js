@@ -31,19 +31,47 @@ function resolveStaticRoot() {
   return path.join(__dirname, '../../web/dist');
 }
 
-async function handleApi(req, res, target) {
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    req.on('data', chunk => { data += chunk; if (data.length > 5 * 1024 * 1024) req.destroy(); });
+    req.on('end', () => resolve(data));
+    req.on('error', reject);
+  });
+}
+
+async function handleApi(req, res, targetRef) {
   const parsed = url.parse(req.url, true);
   const pathname = parsed.pathname;
+  const query = parsed.query;
+
+  // allow dynamic target via query ?target=...
+  let target = targetRef;
+  if (query.target) {
+    const candidate = path.resolve(String(query.target));
+    if (fs.existsSync(candidate)) target = candidate;
+  }
 
   const sendJson = (obj, status = 200) => {
-    res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*' });
+    res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type' });
     res.end(JSON.stringify(obj));
   };
 
+  // GET /api/health
+  if (pathname === '/api/health') {
+    return sendJson({ ok: true, target, time: new Date().toISOString() });
+  }
+
+  // GET /api/config
+  if (pathname === '/api/config' && req.method === 'GET') {
+    const { config, path: cfgPath } = loadConfig(target);
+    return sendJson({ target, configPath: cfgPath, config });
+  }
+
   // GET /api/report/latest
-  if (pathname === '/api/report/latest' || pathname === '/api/latest') {
+  if ((pathname === '/api/report/latest' || pathname === '/api/latest') && req.method === 'GET') {
     const p = path.join(path.resolve(target), '.nodeslim/reports/latest.json');
-    if (!fs.existsSync(p)) return sendJson({ error: 'No report yet. Run nodeslim scan first.' }, 404);
+    if (!fs.existsSync(p)) return sendJson({ error: 'No report yet. Run nodeslim scan first.', target }, 404);
     try {
       const j = JSON.parse(fs.readFileSync(p, 'utf-8'));
       return sendJson(j);
@@ -52,25 +80,171 @@ async function handleApi(req, res, target) {
     }
   }
 
-  // GET /api/scan  (triggers scan)
+  // GET /api/scan?mode=full|shallow&target=...
   if (pathname === '/api/scan' && req.method === 'GET') {
+    const mode = (query.mode || query.shallow ? 'shallow' : 'full');
+    const isShallow = mode === 'shallow' || query.shallow === '1' || query.quick === '1';
     try {
       const { config } = loadConfig(target);
-      const result = await scanProject(target, { config });
-      const { scanSecurity } = require('../analyzer/security-scanner');
-      const { analyzeBundle } = require('../analyzer/bundle-analyzer');
-      const { saveAllReports } = require('../reporter');
-      result.security = scanSecurity(result.packages || []);
-      result.bundle = analyzeBundle(target);
-      await saveAllReports(result, { outputDir: path.join(path.resolve(target), '.nodeslim/reports') });
-      return sendJson(result);
+      let result;
+      if (isShallow) {
+        const { shallowScan } = require('../analyzer/shallow-scanner');
+        const shallow = shallowScan(target);
+        // enrich with suggestions still
+        const { getSuggestions } = require('../analyzer/suggestions');
+        const pkgs = shallow.packages.map(p => ({ ...p, size: p.size, isDirectDependency: p.isDirectDependency, installCount: 1 }));
+        shallow.suggestions = getSuggestions(pkgs);
+        shallow.summary = { totalPackages: pkgs.length, totalSize: shallow.totalSize, totalFiles: 0, duplicateCount: 0, bloatCount: 0, optimizableSize: shallow.totalSize * 0.2, wastedSize: 0, isEstimated: true };
+        // Save as shallow report for dashboard
+        const { saveJsonReport } = require('../reporter/json-reporter');
+        await saveJsonReport({ ...shallow, packages: pkgs, root: target, packageManager: shallow.lockInfo?.type || 'unknown', scannedAt: shallow.scannedAt, exists: false, duplicates: [], bloat: [], issues: [], suggestions: shallow.suggestions, security: [], bundle: null }, { outputDir: path.join(path.resolve(target), '.nodeslim/reports') });
+        return sendJson({ ...shallow, packages: pkgs, shallow: true });
+      } else {
+        result = await scanProject(target, { config });
+        const { scanSecurity } = require('../analyzer/security-scanner');
+        const { analyzeBundle } = require('../analyzer/bundle-analyzer');
+        const { saveAllReports } = require('../reporter');
+        result.security = scanSecurity(result.packages || []);
+        result.bundle = analyzeBundle(target);
+        // additional governance
+        try {
+          const { analyzeProdVsDev } = require('../analyzer/prod-analyzer');
+          result.prod = analyzeProdVsDev(target, result.packages || []);
+          const { checkPlatformBinaries } = require('../analyzer/platform-check');
+          result.platform = checkPlatformBinaries(result.packages || []);
+          const { checkWhitelist } = require('../analyzer/whitelist-check');
+          result.whitelist = checkWhitelist(target);
+        } catch {}
+        await saveAllReports(result, { outputDir: path.join(path.resolve(target), '.nodeslim/reports') });
+        return sendJson(result);
+      }
+    } catch (e) {
+      return sendJson({ error: e.message, stack: e.stack }, 500);
+    }
+  }
+
+  // POST /api/scan  (JSON body with { target, mode })
+  if (pathname === '/api/scan' && req.method === 'POST') {
+    try {
+      const bodyRaw = await readBody(req);
+      const body = bodyRaw ? JSON.parse(bodyRaw) : {};
+      const reqTarget = body.target ? path.resolve(String(body.target)) : target;
+      const actualTarget = fs.existsSync(reqTarget) ? reqTarget : target;
+      const isShallow = body.mode === 'shallow' || body.shallow;
+      const { config } = loadConfig(actualTarget);
+      let result;
+      if (isShallow) {
+        const { shallowScan } = require('../analyzer/shallow-scanner');
+        const shallow = shallowScan(actualTarget);
+        const { getSuggestions } = require('../analyzer/suggestions');
+        const pkgs = shallow.packages;
+        shallow.suggestions = getSuggestions(pkgs);
+        shallow.summary = { totalPackages: pkgs.length, totalSize: shallow.totalSize, totalFiles: 0, duplicateCount: 0, bloatCount: 0, optimizableSize: shallow.totalSize * 0.2, wastedSize: 0, isEstimated: true };
+        const { saveJsonReport } = require('../reporter/json-reporter');
+        await saveJsonReport({ ...shallow, packages: pkgs, root: actualTarget, packageManager: shallow.lockInfo?.type || 'unknown', scannedAt: shallow.scannedAt, exists: false, duplicates: [], bloat: [], issues: [], suggestions: shallow.suggestions, security: [], bundle: null }, { outputDir: path.join(path.resolve(actualTarget), '.nodeslim/reports') });
+        return sendJson({ ...shallow, packages: pkgs, shallow: true, target: actualTarget });
+      } else {
+        result = await scanProject(actualTarget, { config });
+        const { scanSecurity } = require('../analyzer/security-scanner');
+        const { analyzeBundle } = require('../analyzer/bundle-analyzer');
+        const { saveAllReports } = require('../reporter');
+        result.security = scanSecurity(result.packages || []);
+        result.bundle = analyzeBundle(actualTarget);
+        await saveAllReports(result, { outputDir: path.join(path.resolve(actualTarget), '.nodeslim/reports') });
+        return sendJson(result);
+      }
     } catch (e) {
       return sendJson({ error: e.message }, 500);
     }
   }
 
-  // GET /api/scan/stream  (SSE)
+  // POST /api/scan/shallow  (same as above but explicit)
+  if (pathname === '/api/scan/shallow' && req.method === 'POST') {
+    try {
+      const bodyRaw = await readBody(req);
+      const body = bodyRaw ? JSON.parse(bodyRaw) : {};
+      const reqTarget = body.target ? path.resolve(String(body.target)) : target;
+      const actualTarget = fs.existsSync(reqTarget) ? reqTarget : target;
+      const { shallowScan } = require('../analyzer/shallow-scanner');
+      const shallow = shallowScan(actualTarget);
+      const { getSuggestions } = require('../analyzer/suggestions');
+      shallow.suggestions = getSuggestions(shallow.packages);
+      shallow.summary = { totalPackages: shallow.packages.length, totalSize: shallow.totalSize, totalFiles: 0, duplicateCount: 0, bloatCount: 0, optimizableSize: shallow.totalSize * 0.2, wastedSize: 0, isEstimated: true };
+      const { saveJsonReport } = require('../reporter/json-reporter');
+      await saveJsonReport({ ...shallow, root: actualTarget, packageManager: shallow.lockInfo?.type || 'unknown', scannedAt: shallow.scannedAt, exists: false, duplicates: [], bloat: [], issues: [], suggestions: shallow.suggestions, security: [], bundle: null }, { outputDir: path.join(path.resolve(actualTarget), '.nodeslim/reports') });
+      return sendJson({ ...shallow, shallow: true, target: actualTarget });
+    } catch (e) {
+      return sendJson({ error: e.message }, 500);
+    }
+  }
+
+  // POST /api/scan/upload  (lightweight browser import: receives { packageJson, lockfile, lockType })
+  if (pathname === '/api/scan/upload' && req.method === 'POST') {
+    try {
+      const bodyRaw = await readBody(req);
+      const body = JSON.parse(bodyRaw || '{}');
+      const pkgJson = body.packageJson || body.package_json;
+      const lockContent = body.lockfile || body.lockContent;
+      const lockType = body.lockType || 'npm';
+      if (!pkgJson) return sendJson({ error: 'packageJson required' }, 400);
+      const pj = typeof pkgJson === 'string' ? JSON.parse(pkgJson) : pkgJson;
+      // build shallow-like packages from uploaded content
+      const allDeps = { ...pj.dependencies, ...pj.devDependencies, ...pj.peerDependencies };
+      const knownSizes = { 'react': 200*1024, 'react-dom': 3*1024*1024, '@babel/core': 5*1024*1024, 'typescript': 60*1024*1024, 'webpack': 18*1024*1024, 'eslint': 8*1024*1024, 'jest': 25*1024*1024, 'lodash': 5*1024*1024, 'moment': 4*1024*1024 };
+      const packages = Object.keys(allDeps).map(name => {
+        const isDev = !!pj.devDependencies?.[name];
+        const size = knownSizes[name] || (name.startsWith('@types/') ? 500*1024 : 120*1024);
+        return { name, version: String(allDeps[name]).replace(/^[\^~]/,''), size, fileCount: Math.floor(size/2000)+10, installCount: 1, installPaths: [`/virtual/node_modules/${name}`], category: name.startsWith('@types/')?'types':'library', isDirectDependency: !isDev, isDevDependency: isDev, isEstimated: true, isUploaded: true };
+      });
+      const totalSize = packages.reduce((s,p)=>s+p.size,0);
+      const { getSuggestions } = require('../analyzer/suggestions');
+      const suggestions = getSuggestions(packages);
+      // dedupe detection from lockfile if provided
+      let duplicates = [];
+      if (lockContent) {
+        try {
+          if (lockType === 'pnpm') {
+            const yaml = require('js-yaml');
+            const y = yaml.load(lockContent);
+            const seen = new Map();
+            for (const k of Object.keys(y.packages||{})) {
+              const m = k.match(/\/([^@\/]+)@/);
+              if (m) {
+                const n = m[1];
+                if (!seen.has(n)) seen.set(n, new Set());
+                seen.get(n).add(k);
+              }
+            }
+            for (const [name, set] of seen.entries()) if (set.size>1) duplicates.push({ packageName: name, count: set.size, versions: Array.from(set).slice(0,3), totalSize: 0, wastedSize: 0 });
+          }
+        } catch {}
+      }
+      const result = {
+        mode: 'uploaded-shallow',
+        root: pj.name || 'uploaded-project',
+        packageManager: lockType,
+        packages,
+        totalPackages: packages.length,
+        totalSize,
+        totalFiles: 0,
+        duplicates,
+        bloat: [],
+        suggestions,
+        security: [],
+        summary: { totalPackages: packages.length, totalSize, totalFiles: 0, duplicateCount: duplicates.length, bloatCount: 0, optimizableSize: totalSize*0.2, wastedSize: 0, isEstimated: true, isUploaded: true },
+        meta: { root: pj.name || 'uploaded', packageManager: lockType, generatedAt: new Date().toISOString(), version: require('../../package.json').version },
+        scannedAt: new Date().toISOString(),
+        isUploaded: true,
+      };
+      return sendJson(result);
+    } catch (e) {
+      return sendJson({ error: e.message, stack: e.stack }, 500);
+    }
+  }
+
+  // GET /api/scan/stream  (SSE) — support ?target=&mode=
   if (pathname === '/api/scan/stream') {
+    const mode = (query.mode === 'shallow' || query.shallow === '1') ? 'shallow' : 'full';
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
@@ -78,8 +252,16 @@ async function handleApi(req, res, target) {
       'Access-Control-Allow-Origin': '*',
     });
     const send = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
-    send({ stage: 'start', message: '开始扫描...' });
+    send({ stage: 'start', message: '开始扫描...', mode });
     try {
+      if (mode === 'shallow') {
+        send({ stage: 'walk', message: '轻量解析 package.json...' });
+        const { shallowScan } = require('../analyzer/shallow-scanner');
+        const shallow = shallowScan(target);
+        send({ stage: 'done', message: '轻量扫描完成', result: shallow });
+        res.end();
+        return sendJson ? null : null;
+      }
       const { config } = loadConfig(target);
       send({ stage: 'walk', message: '遍历文件系统...' });
       const result = await scanProject(target, { config });
@@ -96,13 +278,13 @@ async function handleApi(req, res, target) {
       send({ stage: 'error', message: e.message });
       res.end();
     }
-    return;
+    return {};
   }
 
-  // GET /api/packages, /api/duplicates, /api/bloat, /api/suggestions
+  // GET /api/packages, /api/duplicates, /api/bloat, /api/suggestions etc (with optional target)
   if (pathname.startsWith('/api/')) {
     const p = path.join(path.resolve(target), '.nodeslim/reports/latest.json');
-    if (!fs.existsSync(p)) return sendJson({ error: 'No report. Run scan.' }, 404);
+    if (!fs.existsSync(p)) return sendJson({ error: 'No report. Run scan.', target }, 404);
     const j = JSON.parse(fs.readFileSync(p, 'utf-8'));
     if (pathname === '/api/packages') return sendJson(j.packages || []);
     if (pathname === '/api/duplicates') return sendJson(j.duplicates || []);
@@ -110,8 +292,30 @@ async function handleApi(req, res, target) {
     if (pathname === '/api/suggestions') return sendJson(j.suggestions || []);
     if (pathname === '/api/security') return sendJson(j.security || []);
     if (pathname === '/api/summary') return sendJson(j.summary || j);
+    if (pathname === '/api/audit') {
+      try {
+        const { scanSourceUsage } = require('../analyzer/usage-scanner');
+        const usage = scanSourceUsage(target, j.packages || []);
+        const { analyzeProdVsDev } = require('../analyzer/prod-analyzer');
+        const prod = analyzeProdVsDev(target, j.packages || []);
+        const { checkEsm } = require('../analyzer/esm-check');
+        const esm = checkEsm(target, usage);
+        const { checkPlatformBinaries } = require('../analyzer/platform-check');
+        const platform = checkPlatformBinaries(j.packages || []);
+        const { checkWhitelist } = require('../analyzer/whitelist-check');
+        const whitelist = checkWhitelist(target);
+        return sendJson({ usage, prod, esm, platform, whitelist, summary: j.summary });
+      } catch (e) { return sendJson({ error: e.message }, 500); }
+    }
+    if (pathname === '/api/dedupe') {
+      const { generateDedupePlan } = require('../analyzer/dedupe-helper');
+      return sendJson(generateDedupePlan(j.duplicates || []));
+    }
+    if (pathname === '/api/import-map') {
+      const { generateImportMap } = require('../analyzer/import-map-generator');
+      return sendJson(generateImportMap(j.packages || []));
+    }
     if (pathname === '/api/tree') {
-      // Build simple tree from packages
       const nodes = (j.packages || []).slice(0, 100).map(pkg => ({
         name: pkg.name, version: pkg.version, size: pkg.size, category: pkg.category,
         isDuplicate: pkg.installCount > 1,
@@ -145,28 +349,24 @@ function createServer(opts = {}) {
     if (pathname.startsWith('/api/')) {
       const handled = await handleApi(req, res, target);
       if (handled !== null) return;
-      // if not handled, fall through to 404 json
-      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.writeHead(404, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
       return res.end(JSON.stringify({ error: 'Not found: ' + pathname }));
     }
 
     // Static
     if (pathname === '/' || pathname === '') pathname = '/index.html';
-    // prevent directory traversal
     const safePath = path.normalize(path.join(staticRoot, pathname));
     if (!safePath.startsWith(path.normalize(staticRoot))) {
       res.writeHead(403); return res.end('Forbidden');
     }
 
     let filePath = safePath;
-    // if path is directory, try index.html
     try {
       const stat = fs.statSync(filePath);
       if (stat.isDirectory()) filePath = path.join(filePath, 'index.html');
     } catch {}
 
     if (!fs.existsSync(filePath)) {
-      // SPA fallback: serve index.html for non-file routes (except /api)
       const index = path.join(staticRoot, 'index.html');
       if (fs.existsSync(index)) {
         filePath = index;
@@ -178,7 +378,7 @@ function createServer(opts = {}) {
 
     const ext = path.extname(filePath).toLowerCase();
     const mime = MIME[ext] || 'application/octet-stream';
-    res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': ext === '.html' ? 'no-cache' : 'max-age=3600' });
+    res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': ext === '.html' ? 'no-cache' : 'max-age=3600', 'Access-Control-Allow-Origin': '*' });
     fs.createReadStream(filePath).pipe(res);
   });
 
@@ -207,14 +407,12 @@ function start(opts = {}) {
       }
     } catch {}
     console.log(`   ${(c.dim ? c.dim('Target: ' + target) : 'Target: ' + target)}`);
-    console.log(`   ${(c.dim ? c.dim('按 Ctrl+C 退出 | 刷新页面自动读取最新报告') : '按 Ctrl+C 退出 | 刷新页面自动读取最新报告')}\n`);
-    // try open browser (non-blocking)
+    console.log(`   ${(c.dim ? c.dim('按 Ctrl+C 退出 | 支持拖拽 package.json 进行少扫描 | ?target= 切换项目') : '按 Ctrl+C 退出 | 支持拖拽 package.json 进行少扫描')}\n`);
     try {
       const { exec } = require('child_process');
       const urlOpen = `http://localhost:${port}`;
       const platform = process.platform;
       const cmd = platform === 'win32' ? `start "" "${urlOpen}"` : platform === 'darwin' ? `open "${urlOpen}"` : `xdg-open "${urlOpen}"`;
-      // don't block; just attempt
       exec(cmd, () => {});
     } catch {}
   });
