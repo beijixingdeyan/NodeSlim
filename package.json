@@ -47,10 +47,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-org/nodeslim.git"
+    "url": "https://github.com/beijixingdeyan/NodeSlim.git"
   },
-  "homepage": "https://github.com/your-org/nodeslim#readme",
+  "homepage": "https://github.com/beijixingdeyan/NodeSlim#readme",
   "bugs": {
-    "url": "https://github.com/your-org/nodeslim/issues"
+    "url": "https://github.com/beijixingdeyan/NodeSlim/issues"
   }
 }

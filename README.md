@@ -38,8 +38,8 @@ NodeSlim 是一个**一站式 `node_modules` 诊断与优化工具**：一个命
 
 ```bash
 # 1. 克隆
-git clone https://github.com/your-org/nodeslim.git
-cd nodeslim
+git clone https://github.com/beijixingdeyan/NodeSlim.git
+cd NodeSlim
 
 # 2. 安装
 npm install
