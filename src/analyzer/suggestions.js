@@ -15,9 +15,10 @@ function loadReplaceRules() {
   return replaceRules;
 }
 
-function getSuggestions(enrichedPackages) {
+function getSuggestions(enrichedPackages, opts = {}) {
   const suggestions = [];
   const pkgNames = new Set(enrichedPackages.map(p => p.name));
+  const usage = opts.usage || null;
 
   // Replacement suggestions
   const rules = loadReplaceRules();
@@ -93,8 +94,41 @@ function getSuggestions(enrichedPackages) {
     autoFixable: true,
   });
 
-  // Unused dependency hint (basic heuristic: flag packages not direct and not deep)
-  // This is lightweight; real unused detection needs import scanning
+  // Real unused / ghost from usage-scanner (when available) — ensures 建议 与 审计 一致
+  if (usage) {
+    const unused = usage.unused || [];
+    const ghost = usage.ghost || [];
+    for (const u of unused.slice(0, 5)) {
+      suggestions.push({
+        type: 'UNUSED',
+        severity: 'WARNING',
+        packageName: u.name,
+        message: `${u.name}@${u.version} 已声明但源码中未检测到 import/require（${u.reason}）`,
+        suggestion: u.suggestion || '确认是否仍需依赖',
+        estimatedSavings: '-',
+        autoFixable: false,
+        source: 'usage-scanner',
+      });
+    }
+    for (const g of ghost.slice(0, 5)) {
+      suggestions.push({
+        type: 'GHOST',
+        severity: 'WARNING',
+        packageName: g.name,
+        message: `${g.name} 在源码中使用但未在 package.json 声明（幽灵依赖）`,
+        suggestion: g.suggestion,
+        estimatedSavings: '-',
+        autoFixable: false,
+        source: 'usage-scanner',
+      });
+    }
+    // 如果有真实扫描结果，就不再使用 heuristic 兜底，避免重复
+    if (unused.length || ghost.length) {
+      return suggestions;
+    }
+  }
+
+  // Fallback heuristic: flag big indirect packages when no real usage data
   const bigUnusedCandidates = enrichedPackages
     .filter(p => !p.isDirectDependency && !p.isDevDependency && p.size > 5 * 1024 * 1024)
     .slice(0, 3);
@@ -103,10 +137,11 @@ function getSuggestions(enrichedPackages) {
       type: 'UNUSED',
       severity: 'WARNING',
       packageName: p.name,
-      message: `${p.name}@${p.version} (${formatBytes(p.size)}) 可能是幽灵依赖或间接依赖，可检查是否可移除`,
+      message: `${p.name}@${p.version} (${formatBytes(p.size)}) 可能是间接依赖，可检查是否可移除`,
       suggestion: '使用 depcheck 或检查 package.json 是否显式依赖该包',
       estimatedSavings: formatBytes(p.size),
       autoFixable: false,
+      source: 'heuristic',
     });
   }
 

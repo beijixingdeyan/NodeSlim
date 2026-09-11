@@ -18,6 +18,10 @@ function buildReport(scanResult, opts = {}) {
       bloatCount: scanResult.bloat?.length || 0,
       optimizableSize: scanResult.optimizableSize || 0,
       wastedSize: scanResult.wastedSize || 0,
+      // 透传本地/估算标记，保持导入文件夹与服务端切换一致
+      isEstimated: scanResult.summary?.isEstimated ?? scanResult.isEstimated ?? false,
+      isLocalFolder: scanResult.isLocalFolder ?? scanResult.summary?.isLocalFolder ?? false,
+      note: scanResult.summary?.note ?? scanResult.note ?? null,
     },
     packages: scanResult.packages || [],
     duplicates: scanResult.duplicates || [],
@@ -26,6 +30,11 @@ function buildReport(scanResult, opts = {}) {
     suggestions: scanResult.suggestions || [],
     security: scanResult.security || [],
     bundle: scanResult.bundle || null,
+    // 新增：统一审计与建议的数据源，避免“建议里的未使用”与“审计里的幽灵”对不上
+    usage: scanResult.usage || null,
+    prod: scanResult.prod || null,
+    platform: scanResult.platform || null,
+    whitelist: scanResult.whitelist || null,
   };
   return report;
 }

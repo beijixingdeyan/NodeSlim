@@ -13,9 +13,15 @@ function extractPackageName(filePath) {
   const parts = after.split('/');
   const first = parts[0];
   if (!first) return null;
+  // 忽略 .bin/.vite/.pnpm/.cache 等隐藏目录（非真实包）
+  if (first.startsWith('.')) return null;
   if (first.startsWith('@')) {
     // scoped: @scope/name
-    if (parts.length >= 2) return `${parts[0]}/${parts[1]}`;
+    if (parts.length >= 2) {
+      // 第二段也可能是 . 开头的隐藏目录，排除
+      if (parts[1].startsWith('.')) return null;
+      return `${parts[0]}/${parts[1]}`;
+    }
     return first;
   }
   return first;

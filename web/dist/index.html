@@ -5,8 +5,12 @@
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>NodeSlim — 智能优化面板</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📦</text></svg>">
+<script>
+// 抑制 Tailwind CDN 在生产环境的 console.warn 刷屏（功能不受影响）
+(function(){const _warn=console.warn;console.warn=function(...a){const msg=String(a[0]||'');if(msg.includes('cdn.tailwindcss.com should not be used in production'))return;_warn.apply(console,a);};})();
+</script>
 <script src="https://cdn.tailwindcss.com"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js" onerror="this.onerror=null;this.src='https://unpkg.com/chart.js@4.4.7/dist/chart.umd.min.js'"></script>
 <style>
   *{font-family: -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif}
   .bar-gradient{background:linear-gradient(90deg,#667eea,#764ba2)}
@@ -47,12 +51,12 @@
         <p class="text-xs text-slate-400 mt-1">支持本机任意路径（服务端可访问）+ 查询参数 ?target= 路径</p>
       </div>
       <div class="flex gap-2 flex-wrap">
-        <label class="bg-slate-900 text-white px-4 py-2 rounded-lg text-sm cursor-pointer hover:bg-black">
-          📁 导入文件夹（本地少扫描）
+        <label class="bg-slate-900 text-white px-4 py-2 rounded-lg text-sm cursor-pointer hover:bg-black" title="读取本地文件夹内所有文件，File API 直接累加真实 byte，含 node_modules 精确体积">
+          📁 导入文件夹（本地全量·真实体积）
           <input id="folderInput" type="file" webkitdirectory directory multiple class="hidden"/>
         </label>
-        <label class="bg-white border border-slate-300 px-4 py-2 rounded-lg text-sm cursor-pointer hover:bg-slate-50">
-          📄 导入 package.json / lock
+        <label class="bg-white border border-slate-300 px-4 py-2 rounded-lg text-sm cursor-pointer hover:bg-slate-50" title="仅解析 package.json/lockfile 估算体积，秒级，无需 node_modules">
+          📄 导入 package.json（少扫描·秒级估算）
           <input id="fileInput" type="file" accept=".json,.yaml,.yml,.lock" multiple class="hidden"/>
         </label>
         <button id="btnClearImport" class="border px-4 py-2 rounded-lg text-sm hidden">✕ 清除导入</button>
@@ -61,9 +65,9 @@
     <!-- Drop Zone -->
     <div id="dropZone" class="mt-4 border-2 border-dashed border-slate-300 rounded-xl p-6 text-center bg-slate-50 hover:bg-white transition">
       <div class="text-2xl">📥</div>
-      <div class="font-medium mt-1">拖拽 <b>package.json</b> / <b>pnpm-lock.yaml</b> / <b>整个项目文件夹</b> 到此处</div>
-      <div class="text-xs text-slate-500 mt-1">前端直接解析，无需上传服务器，秒级出结果（少扫描）。支持批量，自动识别类型。</div>
-      <div class="text-xs text-slate-400 mt-1">也可点击上方“导入文件夹”按钮选择本地目录（通过 File API 本地计算真实体积）</div>
+      <div class="font-medium mt-1">拖拽 <b>整个项目文件夹</b> → 本地全量（真实体积） / 拖拽 <b>package.json</b> → 少扫描（秒级估算）</div>
+      <div class="text-xs text-slate-500 mt-1">前端 File API 直接解析，无需上传服务器，自动识别：含 node_modules 即按真实体积算，否则按估算。</div>
+      <div class="text-xs text-slate-400 mt-1">也可点击上方按钮选择（文件夹=全量 / JSON=少扫描）</div>
     </div>
     <div id="importStatus" class="hidden mt-3 text-sm bg-blue-50 border border-blue-200 rounded-lg p-3"></div>
   </div>
@@ -310,56 +314,87 @@ function showImportStatus(msg, isError){
   el.textContent=msg;
 }
 document.getElementById('folderInput').addEventListener('change', async (e)=>{
-  const files=e.target.files;
-  if(!files.length) return;
-  await handleFolderFiles(files);
+  try{
+    const files=e.target.files;
+    if(!files || !files.length){ showImportStatus('未选择文件夹或浏览器拦截，请尝试拖拽文件夹到下方虚线框', true); return; }
+    showImportStatus(`已选择 ${files.length} 个文件，示例: ${Array.from(files).slice(0,2).map(f=>f.webkitRelativePath||f.name).join(' | ')}`);
+    await handleFolderFiles(files);
+  }catch(err){ showImportStatus('文件夹读取失败: '+err.message, true); console.error(err); }
+  finally{ e.target.value=''; }
 });
 document.getElementById('fileInput').addEventListener('change', async (e)=>{
-  const files=Array.from(e.target.files);
-  if(!files.length) return;
-  await handleJsonFiles(files);
+  try{
+    const files=Array.from(e.target.files||[]);
+    if(!files.length) return;
+    await handleJsonFiles(files);
+  }catch(err){ showImportStatus('文件读取失败: '+err.message, true); console.error(err); }
+  finally{ e.target.value=''; }
 });
 const dropZone=document.getElementById('dropZone');
 dropZone.addEventListener('dragover', e=>{ e.preventDefault(); dropZone.classList.add('drop-active'); });
 dropZone.addEventListener('dragleave', ()=> dropZone.classList.remove('drop-active'));
 dropZone.addEventListener('drop', async e=>{
   e.preventDefault(); dropZone.classList.remove('drop-active');
-  const items=e.dataTransfer.items;
-  const files=e.dataTransfer.files;
-  // Try to detect folder vs files
-  if(items && items[0] && items[0].webkitGetAsEntry){
-    // Use entry traversal for folders
-    const entries=Array.from(items).map(i=>i.webkitGetAsEntry()).filter(Boolean);
-    if(entries.length){
-      await handleEntries(entries);
-      return;
+  try{
+    const items=e.dataTransfer.items;
+    const files=e.dataTransfer.files;
+    // 优先用 Entry 遍历（支持文件夹拖拽）
+    if(items && items.length && items[0] && typeof items[0].webkitGetAsEntry === 'function'){
+      const entries=Array.from(items).map(i=>{ try{ return i.webkitGetAsEntry(); }catch{return null;} }).filter(Boolean);
+      if(entries.length){
+        await handleEntries(entries);
+        return;
+      }
     }
-  }
-  if(files.length) {
-    // Check if files look like folder (webkitRelativePath contains /)
-    const hasFolder = Array.from(files).some(f=>f.webkitRelativePath && f.webkitRelativePath.includes('/'));
-    if(hasFolder) await handleFolderFiles(files);
-    else await handleJsonFiles(Array.from(files));
-  }
+    if(files && files.length) {
+      const arr=Array.from(files);
+      const hasFolder = arr.some(f=>f.webkitRelativePath && f.webkitRelativePath.includes('/'));
+      const looksLikeFolderDrag = arr.length===0 || arr.some(f=>f.type==='' && f.size===0); // 目录拖拽时可能为空文件
+      if(hasFolder || arr.some(f=> (f.webkitRelativePath||'').includes('node_modules'))){
+        await handleFolderFiles(arr);
+      } else if(arr.length){
+        await handleJsonFiles(arr);
+      } else {
+        showImportStatus('拖拽内容为空，请尝试点击上方“📁 导入文件夹”按钮选择', true);
+      }
+    } else {
+      showImportStatus('未获取到文件，请尝试按钮选择（部分浏览器限制拖拽文件夹）', true);
+    }
+  }catch(err){ showImportStatus('拖拽解析失败: '+err.message+'，建议用按钮选择', true); console.error(err); }
 });
 async function handleEntries(entries){
   const allFiles=[];
-  async function traverse(entry, prefix=''){
-    if(entry.isFile){
-      const file=await new Promise(res=>entry.file(res));
-      file._relative=(prefix?prefix+'/':'')+entry.name;
-      allFiles.push(file);
-    } else if(entry.isDirectory){
-      const reader=entry.createReader();
-      const batch=await new Promise(res=>reader.readEntries(res));
-      for(const e of batch) await traverse(e, (prefix?prefix+'/':'')+entry.name);
+  async function readAllEntries(reader){
+    const results=[];
+    while(true){
+      const batch=await new Promise((res, rej)=> reader.readEntries(res, rej));
+      if(!batch || !batch.length) break;
+      results.push(...batch);
+      // 避免死循环：部分实现需再次读取
+      if(batch.length < 100) break;
     }
+    return results;
+  }
+  async function traverse(entry, prefix=''){
+    try{
+      if(entry.isFile){
+        const file=await new Promise((res,rej)=> entry.file(res, rej));
+        file._relative=(prefix?prefix+'/':'')+entry.name;
+        allFiles.push(file);
+      } else if(entry.isDirectory){
+        const reader=entry.createReader();
+        const batch=await readAllEntries(reader);
+        for(const e of batch) await traverse(e, (prefix?prefix+'/':'')+entry.name);
+      }
+    }catch(e){ console.warn('traverse error', e); }
   }
   for(const en of entries) await traverse(en);
-  if(allFiles.some(f=>f._relative.includes('node_modules') || f.name.includes('package.json'))){
-    // Heuristic: if contains node_modules files, do client folder scan; else try json
+  showImportStatus(`已读取 ${allFiles.length} 个条目，正在解析...`);
+  if(!allFiles.length){ showImportStatus('未能读取文件夹内容，请尝试使用上方“📁 导入文件夹”按钮选择', true); return; }
+  if(allFiles.some(f=>f._relative.includes('node_modules') || f._relative.includes('package.json'))){
     const hasPkg=allFiles.some(f=>f.name==='package.json');
-    if(hasPkg && allFiles.length<50) {
+    // 若文件数少且含 package.json，优先按少扫描处理；否则按真实文件夹扫描
+    if(hasPkg && allFiles.length<80 && !allFiles.some(f=>f._relative.includes('node_modules/'))) {
       await handleJsonFiles(allFiles);
     } else {
       await handleFolderFiles(allFiles.map(f=>{ if(f._relative) f.webkitRelativePath=f._relative; return f; }));
@@ -383,29 +418,50 @@ async function handleJsonFiles(files){
     const pkgJson=JSON.parse(pkgText);
     let lockContent=null, lockType='npm';
     if(lockFile){ lockContent=await readFileText(lockFile); if(lockFile.name.includes('pnpm')) lockType='pnpm'; else if(lockFile.name.includes('yarn')) lockType='yarn'; }
-    showImportStatus(`正在少扫描 ${pkgJson.name||'项目'}（前端本地解析，无需上传）...`);
+    // 浏览器出于安全不会暴露绝对路径，这里显示相对路径（文件夹名 + package.json 位置）
+    const pkgPath=pkgFile.webkitRelativePath||pkgFile._relative||pkgFile.name||'';
+    const pkgFolder=pkgPath.includes('/') ? pkgPath.substring(0, pkgPath.lastIndexOf('/')) : '';
+    const displayPkgPath=pkgPath || (pkgFolder ? pkgFolder+'/package.json' : 'package.json');
+    showImportStatus(`正在少扫描 ${displayPkgPath} — ${pkgJson.name||'项目'}（前端本地解析，无需上传）...`);
     // Try server upload for richer suggestions, fallback to client
     try{
       const res=await fetch('/api/scan/upload', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ packageJson: pkgJson, lockfile: lockContent, lockType }) });
-      if(res.ok){ const j=await res.json(); DATA=j; isUploadedMode=true; document.getElementById('modeBadge').classList.remove('hidden'); document.getElementById('modeBadge').textContent='少扫描（上传）'; render(DATA); document.getElementById('loading').classList.add('hidden'); document.getElementById('content').classList.remove('hidden'); document.getElementById('errorBox').classList.add('hidden'); showImportStatus(`✅ 少扫描完成：${DATA.totalPackages} 包，估算 ${formatBytes(DATA.totalSize)}（基于 ${lockType}）`, false); document.getElementById('btnClearImport').classList.remove('hidden'); return; }
+      if(res.ok){ const j=await res.json();
+        // 保留前端路径用于展示，避免只显示 package.json 里的 name
+        const displayRoot=pkgFolder ? `${pkgFolder} (${j.root||pkgJson.name}) — 少扫描` : (j.root||pkgJson.name);
+        j.root=displayRoot; if(j.meta) j.meta.root=displayRoot; j.displayPath=displayPkgPath;
+        DATA=j; isUploadedMode=true; document.getElementById('modeBadge').classList.remove('hidden'); document.getElementById('modeBadge').textContent='少扫描（上传）'; render(DATA); document.getElementById('loading').classList.add('hidden'); document.getElementById('content').classList.remove('hidden'); document.getElementById('errorBox').classList.add('hidden'); showImportStatus(`✅ 少扫描完成：${displayPkgPath} → ${DATA.totalPackages} 包，估算 ${formatBytes(DATA.totalSize)}（基于 ${lockType}）`, false); document.getElementById('btnClearImport').classList.remove('hidden'); return; }
     }catch{}
     // Client fallback
     const result=clientShallowFromPackageJson(pkgJson, lockContent);
+    // 覆盖为真实文件路径，避免只显示 "local-folder"
+    const displayRoot2=pkgFolder ? `${pkgFolder} (${result.root}) — 少扫描` : (pkgPath ? `${pkgPath} — 少扫描` : result.root);
+    result.root=displayRoot2; result.meta.root=displayRoot2; result.displayPath=displayPkgPath; result.folderName=pkgFolder;
     DATA=result; isUploadedMode=true; document.getElementById('modeBadge').classList.remove('hidden'); document.getElementById('modeBadge').textContent='少扫描（本地）';
     render(DATA); document.getElementById('loading').classList.add('hidden'); document.getElementById('content').classList.remove('hidden'); document.getElementById('errorBox').classList.add('hidden');
-    showImportStatus(`✅ 本地少扫描完成：${result.totalPackages} 包，估算 ${formatBytes(result.totalSize)}`, false);
+    showImportStatus(`✅ 本地少扫描完成：${displayPkgPath} → ${result.totalPackages} 包，估算 ${formatBytes(result.totalSize)}`, false);
     document.getElementById('btnClearImport').classList.remove('hidden');
   }catch(e){ showImportStatus('解析失败: '+e.message, true); }
 }
 async function handleFolderFiles(fileList){
-  const arr=Array.from(fileList);
-  showImportStatus(`正在本地计算 ${arr.length} 个文件...（无需上传，纯前端 File API）`);
-  // Client-side folder scan: replicate size-calculator
-  const result=clientScanFromFileList(arr);
-  DATA=result; isUploadedMode=false; document.getElementById('modeBadge').classList.remove('hidden'); document.getElementById('modeBadge').textContent='本地文件夹扫描';
-  render(DATA); document.getElementById('loading').classList.add('hidden'); document.getElementById('content').classList.remove('hidden'); document.getElementById('errorBox').classList.add('hidden');
-  showImportStatus(`✅ 本地扫描完成：${result.totalPackages} 包，真实体积 ${formatBytes(result.totalSize)}（${result.totalFiles} 文件）`, false);
-  document.getElementById('btnClearImport').classList.remove('hidden');
+  try{
+    const arr=Array.from(fileList);
+    if(!arr.length){ showImportStatus('文件夹为空或浏览器未授权读取', true); return; }
+    showImportStatus(`正在本地计算 ${arr.length} 个文件...（无需上传，纯前端 File API）`);
+    // 兼容：部分浏览器 file.size 可能为 0，过滤无意义条目
+    const result=clientScanFromFileList(arr);
+    if(!result.totalPackages){ showImportStatus(`未在所选文件夹中发现 node_modules 结构，已自动尝试少扫描解析 package.json`, true); // fallback to json
+      const pkgLike=arr.find(f=> (f.webkitRelativePath||f.name||'').endsWith('package.json'));
+      if(pkgLike){ await handleJsonFiles(arr.filter(f=>f.name==='package.json' || (f.webkitRelativePath||'').endsWith('package.json') || f.name.includes('lock'))); return; }
+      showImportStatus(`未能识别包结构，请直接拖入含 package.json 的文件`, true);
+      return;
+    }
+    // result 已包含 folderName/displayRoot
+    DATA=result; isUploadedMode=false; document.getElementById('modeBadge').classList.remove('hidden'); document.getElementById('modeBadge').textContent='本地文件夹扫描';
+    render(DATA); document.getElementById('loading').classList.add('hidden'); document.getElementById('content').classList.remove('hidden'); document.getElementById('errorBox').classList.add('hidden');
+    showImportStatus(`✅ 本地扫描完成：${result.displayRoot} → ${result.totalPackages} 包，真实体积 ${formatBytes(result.totalSize)}（${result.totalFiles} 文件）`, false);
+    document.getElementById('btnClearImport').classList.remove('hidden');
+  }catch(err){ showImportStatus('本地扫描失败: '+err.message, true); console.error(err); }
 }
 function clientShallowFromPackageJson(pj, lockContent){
   const allDeps={ ...pj.dependencies, ...pj.devDependencies, ...pj.peerDependencies };
@@ -430,9 +486,17 @@ function clientScanFromFileList(fileList){
     if(idx===-1) return null;
     const after=normalized.slice(idx+'node_modules/'.length);
     const parts=after.split('/'); const first=parts[0]; if(!first) return null;
-    if(first.startsWith('@')) return parts.length>=2?`${parts[0]}/${parts[1]}`:first;
+    if(first.startsWith('.')) return null; // 忽略 .vite/.bin/.pnpm 等缓存目录
+    if(first.startsWith('@')) {
+      if(parts.length>=2 && parts[1].startsWith('.')) return null;
+      return parts.length>=2?`${parts[0]}/${parts[1]}`:first;
+    }
     return first;
   }
+  // 提取文件夹路径（webkitRelativePath 首段即为用户选择的根目录名，浏览器出于安全不会暴露绝对路径）
+  const firstPath=fileList[0]?.webkitRelativePath||fileList[0]?._relative||'';
+  const folderName=firstPath ? firstPath.split('/')[0] : 'local-folder';
+  const displayRoot=folderName && folderName!=='local-folder' ? `${folderName} (本地文件夹)` : 'local-folder';
   for(const f of fileList){
     const p=f.webkitRelativePath||f._relative||f.name;
     if(!p.includes('node_modules/')) continue;
@@ -452,19 +516,64 @@ function clientScanFromFileList(fileList){
   }
   // We could read package.json files async, but for sync we keep version unknown; fine for demo
   const total=pkgs.reduce((s,p)=>s+p.size,0);
-  return { root:'local-folder', packageManager:'unknown', packages:pkgs, totalPackages:pkgs.length, totalSize:total, totalFiles: fileList.length, duplicates:pkgs.filter(p=>p.installCount>1).map(p=>({packageName:p.name,count:p.installCount,versions:[p.version],totalSize:p.size,wastedSize:p.size-p.size/p.installCount})), bloat:[], suggestions:[], security:[], summary:{totalPackages:pkgs.length,totalSize:total,totalFiles:fileList.length,duplicateCount:pkgs.filter(p=>p.installCount>1).length,bloatCount:0,optimizableSize:total*0.2,wastedSize:pkgs.filter(p=>p.installCount>1).reduce((s,p)=>s+(p.size-p.size/p.installCount),0)}, meta:{root:'local-folder',packageManager:'unknown',generatedAt:new Date().toISOString(),version:'1.2.0'}, scannedAt:new Date().toISOString() };
+  // 保持与服务端一致：bloat 判定阈值 10MB / 文件数>500
+  const maxBytes=10*1024*1024;
+  const bloat=pkgs.filter(p=>p.size>maxBytes || p.fileCount>500).map(p=>({
+    name:p.name, version:p.version, size:p.size, sizeFormatted:formatBytes(p.size), fileCount:p.fileCount,
+    ratio: total? p.size/total:0,
+    category:p.category,
+    reason: p.size>50*1024*1024 ? '巨型包 (>50MB)' : p.size>20*1024*1024 ? '大型包 (>20MB)' : p.size>maxBytes ? `超过阈值 10MB` : `文件数过多 (${p.fileCount} files)`,
+    severity: p.size>50*1024*1024 ? 'critical' : p.size>20*1024*1024 ? 'warning' : 'info'
+  })).sort((a,b)=>b.size-a.size);
+  const dups=pkgs.filter(p=>p.installCount>1).map(p=>({packageName:p.name,count:p.installCount,versions:[p.version],totalSize:p.size,wastedSize:p.size-p.size/p.installCount}));
+  const wasted=dups.reduce((s,d)=>s+d.wastedSize,0);
+  // 建议与服务端对齐：替换规则 + 迁移 + @types + 清理（保持与服务端 suggestions.js 一致）
+  const suggestions=[];
+  if(pkgs.find(p=>p.name==='moment')) suggestions.push({type:'REPLACE', packageName:'moment', message:'moment → dayjs: moment 已维护，dayjs 仅 6KB', suggestion:'考虑替换为 dayjs', estimatedSavings:'284KB', from:'moment', to:'dayjs'});
+  if(pkgs.find(p=>p.name==='lodash')) suggestions.push({type:'REPLACE', packageName:'lodash', message:'lodash → es-toolkit: 现代 tree-shakeable', suggestion:'迁移 es-toolkit', estimatedSavings:'60KB', from:'lodash', to:'es-toolkit'});
+  if(pkgs.find(p=>p.name==='axios')) suggestions.push({type:'REPLACE', packageName:'axios', message:'axios → fetch: 原生 fetch 已足够', suggestion:'考虑替换为 fetch', estimatedSavings:'30KB', from:'axios', to:'fetch'});
+  if(pkgs.length>50) suggestions.push({type:'MIGRATION', message:`检测到 ${pkgs.length} 个包，使用 pnpm 可节省 70%+ 磁盘并提升安装速度`, suggestion:'运行 nodeslim optimize --migrate pnpm 一键迁移 (自动备份 lockfile)', estimatedSavings:'70% disk'});
+  // @types 清理（与服务端一致：>5个时提示）
+  const typesCount=pkgs.filter(p=>p.name.startsWith('@types/')).length;
+  const typesSize=pkgs.filter(p=>p.name.startsWith('@types/')).reduce((s,p)=>s+p.size,0);
+  if(typesCount>5) suggestions.push({type:'CLEAN', packageName:'@types/*', message:`发现 ${typesCount} 个 @types/* 包 (${formatBytes(typesSize)})，生产环境可忽略`, suggestion:'部署时使用 npm ci --production 或 pnpm install --prod 过滤 dev 依赖', estimatedSavings:formatBytes(typesSize)});
+  // 通用冗余清理（与服务端一致）
+  suggestions.push({type:'CLEAN', packageName:'*', message:`包内冗余文件 (test/docs/*.md/*.map/.github) 通常占 20-30% 体积`, suggestion:'运行 nodeslim optimize --clean --dry-run 预览清理，或 --clean 执行', estimatedSavings:'20-30%'});
+  // 本地无法做源码级未使用/幽灵检测，需服务端才能一致
+  suggestions.push({type:'INFO', packageName:null, message:`本地导入为浏览器 File API 近似统计，未扫描源码，未使用/幽灵依赖需用“切换路径”走服务端一键扫描才会与审计一致`, suggestion:'切换路径到项目根目录后一键扫描', estimatedSavings:'-'});
+  // 说明本地近似误差
+  const summary={totalPackages:pkgs.length,totalSize:total,totalFiles:fileList.length,duplicateCount:dups.length,bloatCount:bloat.length,optimizableSize:(bloat.reduce((s,b)=>s+b.size,0)*0.3+wasted),wastedSize:wasted,isEstimated:false,isLocalFolder:true, note:'浏览器 File API 近似值（不含 symlink 链接大小 + 未含源码级未使用检测），精确值请用服务端切换路径一键扫描'};
+  return { root:displayRoot, packageManager:'unknown', packages:pkgs, totalPackages:pkgs.length, totalSize:total, totalFiles: fileList.length, duplicates:dups, bloat, suggestions, security:[], summary, meta:{root:displayRoot,packageManager:'unknown',generatedAt:new Date().toISOString(),version:'1.2.0'}, scannedAt:new Date().toISOString(), folderName, displayRoot, isLocalFolder:true };
 }
 document.getElementById('btnClearImport').addEventListener('click', ()=>{
   isUploadedMode=false; document.getElementById('modeBadge').classList.add('hidden'); document.getElementById('importStatus').classList.add('hidden'); document.getElementById('btnClearImport').classList.add('hidden'); fetchLatest();
 });
 document.getElementById('targetInput').value=getQueryTarget();
-document.getElementById('btnSwitchTarget').addEventListener('click', ()=>{
+document.getElementById('btnSwitchTarget').addEventListener('click', async ()=>{
   const v=document.getElementById('targetInput').value.trim();
   if(!v) return;
   currentTarget=v;
   const u=new URL(location.href); u.searchParams.set('target', v); history.replaceState({},'',u);
-  showImportStatus(`已切换目标到 ${v}，正在扫描...`);
-  fetchLatest();
+  showImportStatus(`已切换目标到 ${v}，正在服务端全量扫描（真实体积）...`);
+  document.getElementById('loading').classList.remove('hidden');
+  document.getElementById('errorBox').classList.add('hidden');
+  try{
+    // 触发服务端扫描，等待完成后再刷新
+    const res=await fetch(apiUrl('/api/scan'));
+    if(!res.ok) throw new Error((await res.json()).error || res.statusText);
+    showImportStatus(`✅ 已完成 ${v} 的服务端扫描，正在加载...`);
+    await fetchLatest();
+    // 完成后 2.5s 自动隐藏提示，避免一直挂着
+    setTimeout(()=>{
+      const el=document.getElementById('importStatus');
+      if(el && el.textContent.includes('已完成')) el.classList.add('hidden');
+    }, 2500);
+  }catch(e){
+    showImportStatus(`切换失败: ${e.message}（请确认路径在服务器本机存在且含 package.json）`, true);
+    document.getElementById('loading').classList.add('hidden');
+    document.getElementById('errorBox').classList.remove('hidden');
+    document.getElementById('errorMsg').textContent=e.message;
+  }
 });
 if(getQueryTarget()) currentTarget=getQueryTarget();
 
@@ -474,7 +583,7 @@ function render(data){
   const dups=data.duplicates||[];
   const bloat=data.bloat||[];
   const sugs=data.suggestions||[];
-  const secs=data.security|| (data.issues||[]).filter(i=>i.type==='SECURITY');
+  const secsInitial=data.security|| (data.issues||[]).filter(i=>i.type==='SECURITY');
   document.getElementById('meta').textContent=(data.meta?.root||data.root||'')+'  |  '+(data.meta?.packageManager||data.packageManager||'')+'  |  '+(data.meta?.generatedAt?new Date(data.meta.generatedAt).toLocaleString('zh-CN'):(data.scannedAt?new Date(data.scannedAt).toLocaleString('zh-CN'):''))+(s.isEstimated?'  |  估算':'')+(s.isUploaded?'  |  上传':'');
   document.getElementById('statPackages').textContent=s.totalPackages??pkgs.length;
   document.getElementById('statSize').textContent=formatBytes(s.totalSize);

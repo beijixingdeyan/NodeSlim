@@ -106,7 +106,13 @@ async function handleApi(req, res, targetRef) {
         const { saveAllReports } = require('../reporter');
         result.security = scanSecurity(result.packages || []);
         result.bundle = analyzeBundle(target);
-        // additional governance
+        // additional governance + usage for consistent 建议/审计
+        let usageForSuggestions = null;
+        try {
+          const { scanSourceUsage } = require('../analyzer/usage-scanner');
+          result.usage = scanSourceUsage(target, result.packages || []);
+          usageForSuggestions = result.usage;
+        } catch {}
         try {
           const { analyzeProdVsDev } = require('../analyzer/prod-analyzer');
           result.prod = analyzeProdVsDev(target, result.packages || []);
@@ -114,6 +120,11 @@ async function handleApi(req, res, targetRef) {
           result.platform = checkPlatformBinaries(result.packages || []);
           const { checkWhitelist } = require('../analyzer/whitelist-check');
           result.whitelist = checkWhitelist(target);
+        } catch {}
+        // 用真实 usage 重算 suggestions，确保与审计一致
+        try {
+          const { getSuggestions } = require('../analyzer/suggestions');
+          if (usageForSuggestions) result.suggestions = getSuggestions(result.packages || [], { usage: usageForSuggestions });
         } catch {}
         await saveAllReports(result, { outputDir: path.join(path.resolve(target), '.nodeslim/reports') });
         return sendJson(result);
@@ -150,6 +161,17 @@ async function handleApi(req, res, targetRef) {
         const { saveAllReports } = require('../reporter');
         result.security = scanSecurity(result.packages || []);
         result.bundle = analyzeBundle(actualTarget);
+        let usageForSuggestions2 = null;
+        try { const { scanSourceUsage } = require('../analyzer/usage-scanner'); result.usage = scanSourceUsage(actualTarget, result.packages || []); usageForSuggestions2 = result.usage; } catch {}
+        try {
+          const { analyzeProdVsDev } = require('../analyzer/prod-analyzer');
+          result.prod = analyzeProdVsDev(actualTarget, result.packages || []);
+          const { checkPlatformBinaries } = require('../analyzer/platform-check');
+          result.platform = checkPlatformBinaries(result.packages || []);
+          const { checkWhitelist } = require('../analyzer/whitelist-check');
+          result.whitelist = checkWhitelist(actualTarget);
+        } catch {}
+        try { const { getSuggestions } = require('../analyzer/suggestions'); if (usageForSuggestions2) result.suggestions = getSuggestions(result.packages || [], { usage: usageForSuggestions2 }); } catch {}
         await saveAllReports(result, { outputDir: path.join(path.resolve(actualTarget), '.nodeslim/reports') });
         return sendJson(result);
       }

@@ -64,10 +64,26 @@ async function scanAction(opts) {
         result.issues = [...(result.issues || []), ...result.security];
       }
       result.bundle = analyzeBundle(target);
+      // 统一未使用/幽灵检测，确保 建议 与 审计 一致
+      let usageForScan = null;
+      try {
+        const { scanSourceUsage } = require('../analyzer/usage-scanner');
+        result.usage = scanSourceUsage(target, result.packages || []);
+        usageForScan = result.usage;
+      } catch {}
+      // 用真实 usage 重算 suggestions
+      try {
+        const { getSuggestions } = require('../analyzer/suggestions');
+        if (usageForScan) result.suggestions = getSuggestions(result.packages || [], { usage: usageForScan });
+      } catch {}
       // enrich with prod/platform for terminal summary count
       try {
         const { analyzeProdVsDev } = require('../analyzer/prod-analyzer');
         result.prod = analyzeProdVsDev(target, result.packages || []);
+        const { checkPlatformBinaries } = require('../analyzer/platform-check');
+        result.platform = checkPlatformBinaries(result.packages || []);
+        const { checkWhitelist } = require('../analyzer/whitelist-check');
+        result.whitelist = checkWhitelist(target);
       } catch {}
       spinner.succeed(`扫描完成！发现 ${chalk.bold(result.totalPackages)} 个包，总体积 ${chalk.bold(formatBytes(result.totalSize))} ${result.exists ? '' : chalk.yellow('(仅 package.json 分析)')}`);
     }

@@ -58,19 +58,32 @@ export default function App() {
   };
   useEffect(() => { fetchLatest(); }, []);
 
-  // Import handlers
+  // Import handlers - 显示真实文件夹路径（浏览器仅暴露相对路径，以首段文件夹名为准）
+  const getFolderDisplay = (files) => {
+    const p = files[0]?.webkitRelativePath || files[0]?._relative || '';
+    const folder = p.includes('/') ? p.split('/')[0] : '';
+    return folder ? `${folder} (本地)` : 'local-folder';
+  };
   const handleFolder = async (e) => {
     const files = e.target.files;
     if (!files?.length) return;
-    setImportStatus(`正在本地计算 ${files.length} 个文件...`);
+    const display = getFolderDisplay(Array.from(files));
+    setImportStatus(`正在本地计算 ${display} — ${files.length} 个文件...`);
     const result = clientScanFromFileList(Array.from(files));
-    setData(result); setShallowMode(false); setImportStatus(`✅ 本地文件夹扫描完成：${result.totalPackages} 包，${formatBytes(result.totalSize)}`);
+    // 覆盖为真实路径，避免只显示 local-folder
+    result.root = result.meta.root = `${display} — ${result.totalPackages}包`;
+    result.displayPath = display;
+    setData(result); setShallowMode(false); setImportStatus(`✅ 本地文件夹扫描完成：${display} → ${result.totalPackages} 包，${formatBytes(result.totalSize)}`);
+    e.target.value='';
   };
   const handleFiles = async (e) => {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
-    const pkgFile = files.find(f=>f.name==='package.json');
+    const pkgFile = files.find(f=>f.name==='package.json' || f.webkitRelativePath?.endsWith('package.json'));
     if (!pkgFile) { setImportStatus('未找到 package.json'); return; }
+    const pkgPath = pkgFile.webkitRelativePath || pkgFile._relative || pkgFile.name;
+    const pkgFolder = pkgPath.includes('/') ? pkgPath.substring(0, pkgPath.lastIndexOf('/')) : '';
+    const displayPkgPath = pkgPath || 'package.json';
     const text = await pkgFile.text();
     const pj = JSON.parse(text);
     const lockFile = files.find(f=>f.name==='pnpm-lock.yaml'||f.name==='yarn.lock'||f.name==='package-lock.json');
@@ -78,25 +91,31 @@ export default function App() {
     if(lockFile){ lockContent=await lockFile.text(); if(lockFile.name.includes('pnpm')) lockType='pnpm'; else if(lockFile.name.includes('yarn')) lockType='yarn'; }
     try{
       const res = await fetch('/api/scan/upload', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ packageJson: pj, lockfile: lockContent, lockType }) });
-      if(res.ok){ const j=await res.json(); setData(j); setShallowMode(true); setImportStatus(`✅ 少扫描完成：${j.totalPackages} 包，估算 ${formatBytes(j.totalSize)}`); return; }
+      if(res.ok){ const j=await res.json(); const disp = pkgFolder ? `${pkgFolder} (${j.root||pj.name})` : displayPkgPath; j.root=j.meta.root=disp; j.displayPath=displayPkgPath; setData(j); setShallowMode(true); setImportStatus(`✅ 少扫描完成：${displayPkgPath} → ${j.totalPackages} 包`); e.target.value=''; return; }
     }catch{}
     const result = clientShallowFromPackageJson(pj, lockContent);
-    setData(result); setShallowMode(true); setImportStatus(`✅ 本地少扫描完成：${result.totalPackages} 包`);
+    const disp2 = pkgFolder ? `${pkgFolder} (${result.root}) — 少扫描` : `${displayPkgPath} — 少扫描`;
+    result.root=result.meta.root=disp2; result.displayPath=displayPkgPath;
+    setData(result); setShallowMode(true); setImportStatus(`✅ 本地少扫描完成：${displayPkgPath} → ${result.totalPackages} 包`);
+    e.target.value='';
   };
   const onDrop = async (e) => {
     e.preventDefault();
     const files = e.dataTransfer.files;
     if (!files.length) return;
-    const hasFolder = Array.from(files).some(f=>f.webkitRelativePath?.includes('/'));
+    const arr = Array.from(files);
+    const hasFolder = arr.some(f=>f.webkitRelativePath?.includes('/'));
     if (hasFolder) {
-      const result = clientScanFromFileList(Array.from(files));
-      setData(result); setImportStatus(`✅ 拖拽文件夹扫描：${result.totalPackages} 包`);
+      const result = clientScanFromFileList(arr);
+      const display = getFolderDisplay(arr);
+      result.root=result.meta.root=`${display} — ${result.totalPackages}包`;
+      setData(result); setImportStatus(`✅ 拖拽文件夹扫描：${display} → ${result.totalPackages} 包`);
     } else {
-      const arr = Array.from(files);
-      const pkgFile = arr.find(f=>f.name==='package.json');
+      const pkgFile = arr.find(f=>f.name==='package.json' || f.webkitRelativePath?.endsWith('package.json'));
       if (pkgFile) {
+        const pkgPath=pkgFile.webkitRelativePath||pkgFile.name;
         const text = await pkgFile.text(); const pj = JSON.parse(text);
-        setData(clientShallowFromPackageJson(pj, null)); setShallowMode(true); setImportStatus('✅ 拖拽少扫描完成');
+        const r=clientShallowFromPackageJson(pj, null); r.root=r.meta.root=pkgPath; setData(r); setShallowMode(true); setImportStatus(`✅ 拖拽少扫描完成：${pkgPath}`);
       }
     }
   };
@@ -142,8 +161,8 @@ export default function App() {
               </div>
             </div>
             <div className="flex gap-2">
-              <label className="bg-slate-900 text-white px-4 py-2 rounded-lg text-sm cursor-pointer">📁 导入文件夹<input ref={folderRef} type="file" webkitdirectory="true" multiple className="hidden" onChange={handleFolder}/></label>
-              <label className="bg-white border px-4 py-2 rounded-lg text-sm cursor-pointer">📄 导入 package.json<input ref={fileRef} type="file" accept=".json,.yaml" multiple className="hidden" onChange={handleFiles}/></label>
+              <label className="bg-slate-900 text-white px-4 py-2 rounded-lg text-sm cursor-pointer" title="本地全量：读取文件夹内所有文件真实 byte">📁 导入文件夹（本地全量）<input ref={folderRef} type="file" webkitdirectory="true" multiple className="hidden" onChange={handleFolder}/></label>
+              <label className="bg-white border px-4 py-2 rounded-lg text-sm cursor-pointer" title="少扫描：仅 package.json 估算，秒级">📄 导入 package.json（少扫描）<input ref={fileRef} type="file" accept=".json,.yaml" multiple className="hidden" onChange={handleFiles}/></label>
             </div>
           </div>
           <div onDragOver={e=>e.preventDefault()} onDrop={onDrop} className="mt-4 border-2 border-dashed border-slate-300 rounded-xl p-6 text-center bg-slate-50">
@@ -224,7 +243,7 @@ function StatCard({label,value,unit,highlight,danger,warn}){ return <div classNa
 function catColor(c){ const m={framework:'bg-blue-500','build-tool':'bg-green-500',utility:'bg-orange-500',types:'bg-slate-400',testing:'bg-red-500',library:'bg-purple-500'}; return m[c]||'bg-slate-400'; }
 function sugColor(t){ if(t==='REPLACE') return '#4299e1'; if(t==='MIGRATION') return '#48bb78'; if(t==='CLEAN') return '#ed8936'; return '#a0aec0'; }
 
-// Client helpers for folder import
+// Client helpers for folder import - 显示相对路径（浏览器安全限制仅能获取文件夹名）
 function clientShallowFromPackageJson(pj, lockContent){
   const allDeps={ ...pj.dependencies, ...pj.devDependencies };
   const known={ 'react':200*1024, 'react-dom':3*1024*1024, 'typescript':60*1024*1024 };
@@ -234,9 +253,12 @@ function clientShallowFromPackageJson(pj, lockContent){
 }
 function clientScanFromFileList(files){
   const map=new Map();
-  function extractName(p){ const idx=p.replace(/\\/g,'/').lastIndexOf('node_modules/'); if(idx===-1) return null; const after=p.slice(idx+'node_modules/'.length); const f=after.split('/')[0]; if(f.startsWith('@')) return after.split('/').slice(0,2).join('/'); return f; }
-  for(const f of files){ const p=f.webkitRelativePath||f.name; if(!p.includes('node_modules/')) continue; const n=extractName(p); if(!n) continue; if(!map.has(n)) map.set(n,{name:n,size:0,fileCount:0,paths:new Set()}); const e=map.get(n); e.size+=f.size; e.fileCount++; e.paths.add(p.slice(0, p.indexOf('node_modules/')+('node_modules/'+n).length)); }
+  function extractName(p){ const normalized=p.replace(/\\/g,'/'); const idx=normalized.lastIndexOf('node_modules/'); if(idx===-1) return null; const after=normalized.slice(idx+'node_modules/'.length); const parts=after.split('/'); const first=parts[0]; if(!first || first.startsWith('.')) return null; if(first.startsWith('@')) { if(parts.length>=2 && parts[1].startsWith('.')) return null; return parts.length>=2? parts.slice(0,2).join('/'):first; } return first; }
+  const firstPath=files[0]?.webkitRelativePath||files[0]?._relative||'';
+  const folderName=firstPath ? firstPath.split('/')[0] : 'local-folder';
+  const displayRoot=folderName && folderName!=='local-folder' ? `${folderName} (本地文件夹)` : 'local-folder';
+  for(const f of files){ const p=f.webkitRelativePath||f._relative||f.name; if(!p.includes('node_modules/')) continue; const n=extractName(p); if(!n) continue; if(!map.has(n)) map.set(n,{name:n,size:0,fileCount:0,paths:new Set()}); const e=map.get(n); e.size+=f.size; e.fileCount++; e.paths.add(p.slice(0, p.indexOf('node_modules/')+('node_modules/'+n).length)); }
   const pkgs=Array.from(map.values()).map(v=>({name:v.name,size:v.size,fileCount:v.fileCount,installPaths:Array.from(v.paths),installCount:v.paths.size,version:'unknown',category:'library'}));
   const total=pkgs.reduce((s,p)=>s+p.size,0);
-  return { root:'local-folder', packageManager:'unknown', packages:pkgs, totalPackages:pkgs.length, totalSize:total, totalFiles:files.length, duplicates:pkgs.filter(p=>p.installCount>1).map(p=>({packageName:p.name,count:p.installCount,versions:[p.version],totalSize:p.size,wastedSize:p.size-p.size/p.installCount})), bloat:[], suggestions:[], security:[], summary:{totalPackages:pkgs.length,totalSize:total,totalFiles:files.length,duplicateCount:pkgs.filter(p=>p.installCount>1).length,bloatCount:0,optimizableSize:total*0.2,wastedSize:0}, meta:{root:'local-folder',generatedAt:new Date().toISOString(),version:'1.2.0'}, scannedAt:new Date().toISOString() };
+  return { root:displayRoot, packageManager:'unknown', packages:pkgs, totalPackages:pkgs.length, totalSize:total, totalFiles:files.length, duplicates:pkgs.filter(p=>p.installCount>1).map(p=>({packageName:p.name,count:p.installCount,versions:[p.version],totalSize:p.size,wastedSize:p.size-p.size/p.installCount})), bloat:[], suggestions:[], security:[], summary:{totalPackages:pkgs.length,totalSize:total,totalFiles:files.length,duplicateCount:pkgs.filter(p=>p.installCount>1).length,bloatCount:0,optimizableSize:total*0.2,wastedSize:0}, meta:{root:displayRoot,generatedAt:new Date().toISOString(),version:'1.2.0'}, scannedAt:new Date().toISOString(), folderName, displayRoot };
 }
